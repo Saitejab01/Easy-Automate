@@ -1,0 +1,7 @@
+node_modules/
+dist/
+dist-electron/
+*.log
+easy_automate_db.json
+test_easy_automate_db.json
+.DS_Store
