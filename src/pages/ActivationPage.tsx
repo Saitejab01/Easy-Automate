@@ -298,3 +298,4 @@ export const ActivationPage: React.FC = () => {
     </div>
   );
 };
+

@@ -129,3 +129,4 @@ if (fs.existsSync(testDbPath)) {
 console.log('\n=========================================');
 console.log(' ALL STAGE 1 REQUIREMENTS TESTS PASSED! ');
 console.log('=========================================');
+

@@ -295,3 +295,4 @@ export const AllProjectsPage: React.FC = () => {
     </div>
   );
 };
+

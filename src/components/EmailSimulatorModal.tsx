@@ -124,3 +124,4 @@ export const EmailSimulatorModal: React.FC = () => {
     </div>
   );
 };
+

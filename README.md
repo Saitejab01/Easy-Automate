@@ -112,3 +112,4 @@ Open `http://localhost:5173` in any browser. The built-in client fallback automa
 npm test
 ```
 Executes the comprehensive verification test suite covering user registration, activation tokens, bcrypt password hashing, unactivated account rejection, project creation, validation, and user isolation.
+

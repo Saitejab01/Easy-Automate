@@ -593,3 +593,4 @@ export const IndividualProjectPage: React.FC = () => {
     </div>
   );
 };
+
