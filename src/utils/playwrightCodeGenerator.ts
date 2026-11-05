@@ -93,7 +93,11 @@ export function generatePlaywrightCode(
           break;
         }
         case 'enter_text': {
-          const text = (resolvedParams.text || '').replace(/'/g, "\\'");
+          const rawText = resolvedParams.text !== undefined ? String(resolvedParams.text) : String(resolvedParams.inputData || '');
+          const text = rawText.replace(/'/g, "\\'");
+          if (resolvedParams.clearBeforeEnter || resolvedParams.clearBeforeTyping) {
+            lines.push(`  await ${locatorCode}.clear();`);
+          }
           lines.push(`  await ${locatorCode}.fill('${text}');`);
           break;
         }
@@ -241,9 +245,9 @@ function resolveVariables(text: string, localVars: any[] = [], globalVars: any[]
   if (!text || typeof text !== 'string') return text;
   const varRegex = /\$\{?([a-zA-Z0-9_]+)\}?/g;
   return text.replace(varRegex, (match, varName) => {
-    const localVar = (localVars || []).find(v => v.name === varName);
+    const localVar = (localVars || []).find(v => v.name === varName || v.name.toLowerCase() === varName.toLowerCase());
     if (localVar) return localVar.value;
-    const globalVar = (globalVars || []).find(v => v.name === varName);
+    const globalVar = (globalVars || []).find(v => v.name === varName || v.name.toLowerCase() === varName.toLowerCase());
     if (globalVar) return globalVar.value;
     return match;
   });

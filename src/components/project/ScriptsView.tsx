@@ -134,9 +134,13 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
   // Step Parameter Edit Drawer
   const [editingStep, setEditingStep] = useState<ScriptStep | null>(null);
 
-  // Variable suggestion popup helper for inputs (Section 7.4)
-  const [varSuggestions, setVarSuggestions] = useState<ScriptVariable[]>([]);
-  const [activeInputRef, setActiveInputRef] = useState<{ fieldName: string; text: string } | null>(null);
+  // Variable suggestion autocomplete state (Section 9.4)
+  const [varAutoComplete, setVarAutoComplete] = useState<{
+    inputId: string;
+    currentValue: string;
+    query: string;
+    onSelect: (val: string) => void;
+  } | null>(null);
 
   const [isLoading, setIsLoading] = useState(true);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
@@ -458,7 +462,7 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
     }
   };
 
-  const handleInlineUrlChange = (stepId: string, url: string) => {
+  const handleInlineParamChange = (stepId: string, paramKey: string, val: string) => {
     setActiveScript(prev => {
       if (!prev) return null;
       return {
@@ -467,7 +471,7 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
           if (s.id === stepId) {
             return {
               ...s,
-              parameters: { ...(s.parameters || {}), url }
+              parameters: { ...(s.parameters || {}), [paramKey]: val }
             };
           }
           return s;
@@ -476,7 +480,7 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
     });
   };
 
-  const handleSaveInlineUrl = async (stepId: string) => {
+  const handleSaveInlineParam = async (stepId: string) => {
     if (!activeScript) return;
     const targetStep = activeScript.steps.find(s => s.id === stepId);
     if (!targetStep) return;
@@ -485,9 +489,12 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
         parameters: targetStep.parameters
       });
     } catch (err: any) {
-      console.warn('Failed to auto-save URL parameter:', err);
+      console.warn('Failed to auto-save parameter:', err);
     }
   };
+
+  const handleInlineUrlChange = (stepId: string, url: string) => handleInlineParamChange(stepId, 'url', url);
+  const handleSaveInlineUrl = handleSaveInlineParam;
 
   // --- Repository Element Mapping (Section 5) ---
   const handleMapElementToStep = async (element: RepositoryElement) => {
@@ -560,33 +567,140 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
     }
   };
 
-  // Autocomplete Variable Suggestion Trigger (Section 7.4)
-  const handleInputChange = (fieldName: string, val: string, updateParamFn: (val: string) => void) => {
+  // Autocomplete Variable Suggestion Trigger (Section 9.4)
+  const handleInputWithVarSuggestions = (
+    inputId: string,
+    val: string,
+    updateParamFn: (newVal: string) => void
+  ) => {
     updateParamFn(val);
-    const lastCharIdx = val.lastIndexOf('$');
-    if (lastCharIdx !== -1) {
-      const query = val.slice(lastCharIdx + 1).toLowerCase();
-      const currentLocal = variables.filter(v => v.type === 'Local' && v.scriptId === activeScript?.id);
-      const currentGlobal = variables.filter(v => v.type === 'Global');
-      const allAccessible = [...currentLocal, ...currentGlobal];
-      const matches = allAccessible.filter(v => v.name.toLowerCase().startsWith(query));
-      setVarSuggestions(matches);
-      setActiveInputRef({ fieldName, text: val });
-    } else {
-      setVarSuggestions([]);
-      setActiveInputRef(null);
+    const lastDollar = val.lastIndexOf('$');
+    if (lastDollar !== -1) {
+      const query = val.slice(lastDollar + 1).toLowerCase();
+      if (!query.includes(' ') && !query.includes('/')) {
+        setVarAutoComplete({
+          inputId,
+          currentValue: val,
+          query,
+          onSelect: updateParamFn
+        });
+        return;
+      }
     }
+    setVarAutoComplete(null);
   };
 
-  const handleSelectVarSuggestion = (varName: string, updateParamFn: (val: string) => void) => {
-    if (!activeInputRef) return;
-    const val = activeInputRef.text;
-    const lastCharIdx = val.lastIndexOf('$');
-    const prefix = val.slice(0, lastCharIdx);
-    const updated = `${prefix}$${varName}`;
-    updateParamFn(updated);
-    setVarSuggestions([]);
-    setActiveInputRef(null);
+  const handleSelectVariable = (varName: string) => {
+    if (!varAutoComplete) return;
+    const val = varAutoComplete.currentValue;
+    const lastDollar = val.lastIndexOf('$');
+    const prefix = lastDollar >= 0 ? val.slice(0, lastDollar) : '';
+    const newVal = `${prefix}$${varName}`;
+    varAutoComplete.onSelect(newVal);
+    setVarAutoComplete(null);
+  };
+
+  const renderVariableDropdown = (inputId: string) => {
+    if (!varAutoComplete || varAutoComplete.inputId !== inputId) return null;
+
+    const query = varAutoComplete.query;
+    const currentLocal = variables.filter(
+      v => v.type === 'Local' && (!v.scriptId || v.scriptId === activeScript?.id)
+    );
+    const currentGlobal = variables.filter(v => v.type === 'Global');
+
+    const matchingLocal = query === ''
+      ? currentLocal
+      : currentLocal.filter(v => v.name.toLowerCase().includes(query));
+
+    const matchingGlobal = query === ''
+      ? currentGlobal
+      : currentGlobal.filter(v => v.name.toLowerCase().includes(query));
+
+    const hasAnyMatches = matchingLocal.length > 0 || matchingGlobal.length > 0;
+
+    return (
+      <div
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={(e) => e.stopPropagation()}
+        className="absolute left-0 right-0 top-full mt-1.5 bg-slate-900 border border-brand-500/60 rounded-2xl shadow-2xl p-2 z-50 max-h-64 overflow-y-auto divide-y divide-slate-800 animate-fadeIn font-sans"
+      >
+        <div className="flex items-center justify-between px-2 py-1 text-[10px] text-slate-400 font-semibold border-b border-slate-800/80 mb-1">
+          <span>Variables matching &quot;${query}&quot;</span>
+          <span className="text-slate-500 font-mono text-[9px]">Click to insert</span>
+        </div>
+
+        {matchingLocal.length > 0 && (
+          <div className="py-1">
+            <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider px-2 py-0.5 flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+              Local Variables ({matchingLocal.length})
+            </span>
+            <div className="space-y-0.5 mt-0.5">
+              {matchingLocal.map(v => (
+                <button
+                  key={v.id}
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => handleSelectVariable(v.name)}
+                  className="w-full text-left px-2.5 py-1.5 rounded-xl hover:bg-emerald-500/10 hover:border hover:border-emerald-500/30 text-xs text-slate-200 flex items-center justify-between group transition-all"
+                >
+                  <div className="flex items-center gap-2 truncate">
+                    <span className="font-mono text-emerald-400 font-bold group-hover:text-emerald-300">
+                      ${v.name}
+                    </span>
+                    <span className="text-[11px] text-slate-400 truncate max-w-[160px]">
+                      = {v.value || '(empty)'}
+                    </span>
+                  </div>
+                  <span className="text-[9px] font-mono text-slate-400 bg-slate-950 px-1.5 py-0.5 rounded border border-slate-800 shrink-0">
+                    {v.dataType}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {matchingGlobal.length > 0 && (
+          <div className="py-1">
+            <span className="text-[10px] font-bold text-amber-400 uppercase tracking-wider px-2 py-0.5 flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+              Global Variables ({matchingGlobal.length})
+            </span>
+            <div className="space-y-0.5 mt-0.5">
+              {matchingGlobal.map(v => (
+                <button
+                  key={v.id}
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => handleSelectVariable(v.name)}
+                  className="w-full text-left px-2.5 py-1.5 rounded-xl hover:bg-amber-500/10 hover:border hover:border-amber-500/30 text-xs text-slate-200 flex items-center justify-between group transition-all"
+                >
+                  <div className="flex items-center gap-2 truncate">
+                    <span className="font-mono text-amber-400 font-bold group-hover:text-amber-300">
+                      ${v.name}
+                    </span>
+                    <span className="text-[11px] text-slate-400 truncate max-w-[160px]">
+                      = {v.value || '(empty)'}
+                    </span>
+                  </div>
+                  <span className="text-[9px] font-mono text-slate-400 bg-slate-950 px-1.5 py-0.5 rounded border border-slate-800 shrink-0">
+                    {v.dataType}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {!hasAnyMatches && (
+          <div className="p-3 text-center text-xs text-slate-400">
+            No variables matching <span className="text-amber-400 font-mono font-bold">&quot;${query}&quot;</span> found in this project.
+          </div>
+        )}
+      </div>
+    );
   };
 
   // --- Run Settings & Execution (Section 8 & 9) ---
@@ -1235,10 +1349,25 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
                                   type="text"
                                   placeholder="e.g. https://example.com or $baseURL"
                                   value={step.parameters?.url || ''}
-                                  onChange={(e) => handleInlineUrlChange(step.id, e.target.value)}
-                                  onBlur={() => handleSaveInlineUrl(step.id)}
+                                  onChange={(e) =>
+                                    handleInputWithVarSuggestions(
+                                      `step_${step.id}_url`,
+                                      e.target.value,
+                                      (newV) => {
+                                        handleInlineParamChange(step.id, 'url', newV);
+                                        handleSaveInlineParam(step.id);
+                                      }
+                                    )
+                                  }
+                                  onBlur={() => {
+                                    setTimeout(() => {
+                                      setVarAutoComplete(prev => prev?.inputId === `step_${step.id}_url` ? null : prev);
+                                    }, 200);
+                                    handleSaveInlineParam(step.id);
+                                  }}
                                   className="w-full px-2.5 py-1 text-xs bg-slate-950 border border-slate-700/80 rounded-lg text-emerald-400 placeholder:text-slate-600 focus:outline-none focus:border-brand-500 font-mono"
                                 />
+                                {renderVariableDropdown(`step_${step.id}_url`)}
                               </div>
                               {!step.parameters?.url && (
                                 <span className="text-[10px] text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 whitespace-nowrap">
@@ -1248,11 +1377,77 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
                             </div>
                           )}
 
+                          {/* Inline Input for Enter Text */}
+                          {step.nlpId === 'enter_text' && (
+                            <div className="flex items-center gap-2 pt-1.5 max-w-xl">
+                              <span className="text-[11px] font-semibold text-slate-400 shrink-0">Input Data:</span>
+                              <div className="relative flex-1">
+                                <input
+                                  type="text"
+                                  placeholder="e.g. customer@demo.com or $username"
+                                  value={step.parameters?.text !== undefined ? step.parameters.text : (step.parameters?.inputData || '')}
+                                  onChange={(e) =>
+                                    handleInputWithVarSuggestions(
+                                      `step_${step.id}_text`,
+                                      e.target.value,
+                                      (newV) => {
+                                        handleInlineParamChange(step.id, 'text', newV);
+                                        handleSaveInlineParam(step.id);
+                                      }
+                                    )
+                                  }
+                                  onBlur={() => {
+                                    setTimeout(() => {
+                                      setVarAutoComplete(prev => prev?.inputId === `step_${step.id}_text` ? null : prev);
+                                    }, 200);
+                                    handleSaveInlineParam(step.id);
+                                  }}
+                                  className="w-full px-2.5 py-1 text-xs bg-slate-950 border border-slate-700/80 rounded-lg text-brand-300 placeholder:text-slate-600 focus:outline-none focus:border-brand-500 font-mono"
+                                />
+                                {renderVariableDropdown(`step_${step.id}_text`)}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Inline Input for Verify Text */}
+                          {step.nlpId === 'verify_text' && (
+                            <div className="flex items-center gap-2 pt-1.5 max-w-xl">
+                              <span className="text-[11px] font-semibold text-slate-400 shrink-0">Expected Text:</span>
+                              <div className="relative flex-1">
+                                <input
+                                  type="text"
+                                  placeholder="e.g. Welcome or $VerificationText"
+                                  value={step.parameters?.expectedText || ''}
+                                  onChange={(e) =>
+                                    handleInputWithVarSuggestions(
+                                      `step_${step.id}_expectedText`,
+                                      e.target.value,
+                                      (newV) => {
+                                        handleInlineParamChange(step.id, 'expectedText', newV);
+                                        handleSaveInlineParam(step.id);
+                                      }
+                                    )
+                                  }
+                                  onBlur={() => {
+                                    setTimeout(() => {
+                                      setVarAutoComplete(prev => prev?.inputId === `step_${step.id}_expectedText` ? null : prev);
+                                    }, 200);
+                                    handleSaveInlineParam(step.id);
+                                  }}
+                                  className="w-full px-2.5 py-1 text-xs bg-slate-950 border border-slate-700/80 rounded-lg text-purple-300 placeholder:text-slate-600 focus:outline-none focus:border-brand-500 font-mono"
+                                />
+                                {renderVariableDropdown(`step_${step.id}_expectedText`)}
+                              </div>
+                            </div>
+                          )}
+
                           {/* Parameter Chips */}
                           {step.parameters && Object.keys(step.parameters).length > 0 && (
                             <div className="flex flex-wrap gap-1.5 pt-1">
                               {Object.entries(step.parameters).map(([k, v]) => {
                                 if (step.nlpId === 'navigate_to_url' && k === 'url') return null;
+                                if (step.nlpId === 'enter_text' && (k === 'text' || k === 'inputData')) return null;
+                                if (step.nlpId === 'verify_text' && k === 'expectedText') return null;
                                 if (v === undefined || v === '') return null;
                                 const isVariable = typeof v === 'string' && v.startsWith('$');
 
@@ -1984,45 +2179,32 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
                             ))}
                           </select>
                         ) : (
-                          <input
-                            type={param.type === 'number' ? 'number' : 'text'}
-                            placeholder={param.placeholder}
-                            value={String(editingStep.parameters?.[param.name] ?? param.currentValue)}
-                            onChange={(e) =>
-                              handleInputChange(param.name, e.target.value, (newV) => {
-                                setEditingStep(prev => prev ? {
-                                  ...prev,
-                                  parameters: { ...prev.parameters, [param.name]: newV }
-                                } : null);
-                              })
-                            }
-                            className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:border-brand-500 font-mono"
-                            autoFocus={param.required && !editingStep.parameters?.[param.name]}
-                          />
-                        )}
-
-                        {/* Variable Suggestions Autocomplete Dropdown (Section 7.4) */}
-                        {activeInputRef?.fieldName === param.name && varSuggestions.length > 0 && (
-                          <div className="absolute left-0 right-0 top-full mt-1 bg-slate-900 border border-brand-500/50 rounded-xl shadow-2xl p-1 z-30 max-h-40 overflow-y-auto">
-                            <span className="text-[10px] text-slate-500 font-semibold px-2 py-1 block uppercase">
-                              Matching Variables
-                            </span>
-                            {varSuggestions.map(sv => (
-                              <button
-                                key={sv.id}
-                                type="button"
-                                onClick={() => handleSelectVarSuggestion(sv.name, (newV) => {
-                                  setEditingStep(prev => prev ? {
-                                    ...prev,
-                                    parameters: { ...prev.parameters, [param.name]: newV }
-                                  } : null);
-                                })}
-                                className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-800 text-xs text-slate-200 flex items-center justify-between"
-                              >
-                                <span className="font-mono text-brand-300 font-bold">${sv.name}</span>
-                                <span className="text-[10px] text-slate-500">{sv.type} ({sv.dataType})</span>
-                              </button>
-                            ))}
+                          <div className="relative">
+                            <input
+                              type={param.type === 'number' ? 'number' : 'text'}
+                              placeholder={param.placeholder}
+                              value={String(editingStep.parameters?.[param.name] ?? param.currentValue)}
+                              onChange={(e) =>
+                                handleInputWithVarSuggestions(
+                                  `drawer_${param.name}`,
+                                  e.target.value,
+                                  (newV) => {
+                                    setEditingStep(prev => prev ? {
+                                      ...prev,
+                                      parameters: { ...prev.parameters, [param.name]: newV }
+                                    } : null);
+                                  }
+                                )
+                              }
+                              onBlur={() => {
+                                setTimeout(() => {
+                                  setVarAutoComplete(prev => prev?.inputId === `drawer_${param.name}` ? null : prev);
+                                }, 200);
+                              }}
+                              className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:border-brand-500 font-mono"
+                              autoFocus={param.required && !editingStep.parameters?.[param.name]}
+                            />
+                            {renderVariableDropdown(`drawer_${param.name}`)}
                           </div>
                         )}
                       </div>

@@ -113,7 +113,11 @@ export class AutomationEngine {
             break;
           }
           case 'enter_text': {
-            const text = (resolvedParams.text || '').replace(/'/g, "\\'");
+            const rawText = resolvedParams.text !== undefined ? String(resolvedParams.text) : String(resolvedParams.inputData || '');
+            const text = rawText.replace(/'/g, "\\'");
+            if (resolvedParams.clearBeforeEnter || resolvedParams.clearBeforeTyping) {
+              lines.push(`  await ${locatorCode}.clear();`);
+            }
             lines.push(`  await ${locatorCode}.fill('${text}');`);
             break;
           }
@@ -539,10 +543,15 @@ export class AutomationEngine {
 
             case 'enter_text': {
               const loc = this.getPlaywrightLocator(page, step.locator, step.parameters?.dynamicValues);
-              const text = resolvedParams.text || '';
+              const text = resolvedParams.text !== undefined ? String(resolvedParams.text) : String(resolvedParams.inputData || '');
+              if (resolvedParams.clearBeforeEnter || resolvedParams.clearBeforeTyping) {
+                await loc.clear({ timeout: waitTimeMs }).catch(() => {});
+              }
               await loc.waitFor({ state: 'visible', timeout: waitTimeMs });
               await loc.fill(text, { timeout: waitTimeMs });
-              logs.push(`[${new Date().toLocaleTimeString()}] Entered text "${text}" into element "${step.elementName}"`);
+              const isSensitive = stepVarsUsed.some(v => v.isMasked) || /password|secret|token|pin/i.test(step.elementName || '') || /password|secret/i.test(step.locator?.value || '');
+              const displayLogText = isSensitive ? '••••••••' : text;
+              logs.push(`[${new Date().toLocaleTimeString()}] Entered text "${displayLogText}" into element "${step.elementName}"`);
               break;
             }
 
@@ -971,7 +980,7 @@ export class AutomationEngine {
     const varRegex = /\$\{?([a-zA-Z0-9_]+)\}?/g;
     resolved = resolved.replace(varRegex, (match, varName) => {
       // Check local first
-      const localVar = (localVars || []).find(v => v.name === varName);
+      const localVar = (localVars || []).find(v => v.name === varName || v.name.toLowerCase() === varName.toLowerCase());
       if (localVar) {
         const isMasked = localVar.dataType === 'Encrypted' || /password|secret|token|key/i.test(localVar.name);
         variablesUsed.push({
@@ -984,7 +993,7 @@ export class AutomationEngine {
       }
 
       // Check global
-      const globalVar = (globalVars || []).find(v => v.name === varName);
+      const globalVar = (globalVars || []).find(v => v.name === varName || v.name.toLowerCase() === varName.toLowerCase());
       if (globalVar) {
         const isMasked = globalVar.dataType === 'Encrypted' || /password|secret|token|key/i.test(globalVar.name);
         variablesUsed.push({
