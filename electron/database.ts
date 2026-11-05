@@ -307,6 +307,7 @@ export interface ScriptExecutionDetail {
     logs: string[];
   };
   screenRecordingUrl?: string;
+  generatedPlaywrightCode?: string;
 }
 
 export interface DetailedExecutionRecord {
@@ -342,6 +343,9 @@ export interface DatabaseSchema {
   detailedExecutions: DetailedExecutionRecord[];
   runSettings: Record<string, RunSettings>;
   executionCounter: number;
+  scriptsSeededProjects?: string[];
+  repositorySeededProjects?: string[];
+  testDataSeededProjects?: string[];
 }
 
 export class JsonDatabase {
@@ -360,23 +364,33 @@ export class JsonDatabase {
     variables: [],
     detailedExecutions: [],
     runSettings: {},
-    executionCounter: 1
+    executionCounter: 1,
+    scriptsSeededProjects: [],
+    repositorySeededProjects: [],
+    testDataSeededProjects: []
   };
 
   constructor(customPath?: string) {
     if (customPath) {
       this.filePath = customPath;
     } else {
+      const localWorkspacePath = path.join(process.cwd(), 'easy_automate_db.json');
       const dataDir = process.env.APPDATA || (process.platform === 'darwin' ? process.env.HOME + '/Library/Preferences' : '/var/local');
       const appDir = path.join(dataDir, 'easy-automate');
-      if (!fs.existsSync(appDir)) {
-        try {
-          fs.mkdirSync(appDir, { recursive: true });
-        } catch {
-          // Fallback to current working directory
+
+      try {
+        if (!fs.existsSync(localWorkspacePath)) {
+          fs.writeFileSync(localWorkspacePath, JSON.stringify({}), 'utf-8');
         }
+        this.filePath = localWorkspacePath;
+      } catch {
+        if (!fs.existsSync(appDir)) {
+          try {
+            fs.mkdirSync(appDir, { recursive: true });
+          } catch {}
+        }
+        this.filePath = path.join(appDir, 'easy_automate_db.json');
       }
-      this.filePath = fs.existsSync(appDir) ? path.join(appDir, 'easy_automate_db.json') : path.join(process.cwd(), 'easy_automate_db.json');
     }
     this.load();
     this.seedDefaultsIfNeeded();
@@ -401,6 +415,9 @@ export class JsonDatabase {
         if (!this.data.detailedExecutions) this.data.detailedExecutions = [];
         if (!this.data.runSettings) this.data.runSettings = {};
         if (typeof this.data.executionCounter !== 'number') this.data.executionCounter = 1;
+        if (!this.data.scriptsSeededProjects) this.data.scriptsSeededProjects = [];
+        if (!this.data.repositorySeededProjects) this.data.repositorySeededProjects = [];
+        if (!this.data.testDataSeededProjects) this.data.testDataSeededProjects = [];
       } else {
         this.save();
       }
@@ -477,22 +494,28 @@ export class JsonDatabase {
 
     // 2. Seed Repository Pages, Elements, Executions, and Stage 3 Test Data for projects if empty
     for (const proj of this.data.projects) {
+      if (!this.data.repositorySeededProjects) this.data.repositorySeededProjects = [];
       const existingPages = this.data.pages.filter(p => p.projectId === proj.id);
-      if (existingPages.length === 0) {
+      if (existingPages.length === 0 && !this.data.repositorySeededProjects.includes(proj.id)) {
         this.seedProjectRepository(proj.id);
         this.seedProjectExecutions(proj.id);
+        this.data.repositorySeededProjects.push(proj.id);
         hasChanges = true;
       }
 
+      if (!this.data.testDataSeededProjects) this.data.testDataSeededProjects = [];
       const existingTestData = this.data.testDataFolders.filter(f => f.projectId === proj.id);
-      if (existingTestData.length === 0) {
+      if (existingTestData.length === 0 && !this.data.testDataSeededProjects.includes(proj.id)) {
         this.seedProjectTestData(proj.id, 'demo@easyautomate.dev');
+        this.data.testDataSeededProjects.push(proj.id);
         hasChanges = true;
       }
 
+      if (!this.data.scriptsSeededProjects) this.data.scriptsSeededProjects = [];
       const existingModules = this.data.scriptModules.filter(m => m.projectId === proj.id);
-      if (existingModules.length === 0) {
+      if (existingModules.length === 0 && !this.data.scriptsSeededProjects.includes(proj.id)) {
         this.seedProjectScripts(proj.id, 'demo@easyautomate.dev');
+        this.data.scriptsSeededProjects.push(proj.id);
         hasChanges = true;
       }
     }
@@ -2536,7 +2559,11 @@ export class JsonDatabase {
       throw new Error('Module name must be at least 2 characters long.');
     }
 
-    const normParentId = parentId || null;
+    let normParentId = parentId ? parentId.trim() : null;
+    if (normParentId && !this.data.scriptModules.some(m => m.id === normParentId && m.projectId === projectId)) {
+      normParentId = null;
+    }
+
     const duplicate = this.data.scriptModules.find(m =>
       m.projectId === projectId &&
       m.parentId === normParentId &&
@@ -3024,205 +3051,42 @@ export class JsonDatabase {
     this.data.executionCounter = execNum + 1;
     const executionId = `EXEC${String(execNum).padStart(4, '0')}`;
 
-    const startedAt = new Date().toISOString();
-    const executedSteps: StepExecutionDetail[] = [];
-    let scriptStatus: 'Passed' | 'Failed' = 'Passed';
-    let failureDetails: ScriptExecutionDetail['failureDetails'] = undefined;
-
-    const startTimestamp = Date.now();
-
-    for (let i = 0; i < script.steps.length; i++) {
-      const step = script.steps[i];
-      if (!step.isEnabled) continue;
-
-      const stepStart = Date.now();
-      const stepStartDate = new Date(stepStart).toISOString();
-      const logs: string[] = [];
-      logs.push(`[${new Date(stepStart).toLocaleTimeString()}] Step ${step.stepNumber}: Starting "${step.nlpName}" (${step.nlpCategory})`);
-
-      // Resolve variables in input parameters
-      const resolvedParams: Record<string, any> = {};
-      const stepVarsUsed: Array<{ name: string; type: VariableType; resolvedValue: string; isMasked?: boolean }> = [];
-
-      for (const [k, v] of Object.entries(step.parameters || {})) {
-        if (typeof v === 'string') {
-          const { resolved, variablesUsed } = AutomationEngine.resolveVariables(v, localVars, globalVars);
-          resolvedParams[k] = resolved;
-          stepVarsUsed.push(...variablesUsed);
-        } else {
-          resolvedParams[k] = v;
+    // Execute through Playwright Engine with real browser launch and TypeScript mapping
+    const scriptExecution = await AutomationEngine.executeScriptWithPlaywright({
+      projectId,
+      script,
+      moduleName: module?.name || 'General Module',
+      elements: this.data.elements.filter(e => e.projectId === projectId),
+      testDataFiles: this.data.testDataFiles.filter(f => f.projectId === projectId),
+      localVariables: localVars,
+      globalVariables: globalVars,
+      runSettings: settings,
+      onFileUpdated: (updatedFile) => {
+        const idx = this.data.testDataFiles.findIndex(f => f.id === updatedFile.id);
+        if (idx !== -1) {
+          this.data.testDataFiles[idx] = updatedFile;
+          this.save();
         }
       }
+    });
 
-      // Check element mapping
-      let resolvedLocatorValue = '';
-      if (step.locator) {
-        resolvedLocatorValue = AutomationEngine.resolveLocatorValue(step.locator, step.parameters?.dynamicValues);
-        logs.push(`[${new Date().toLocaleTimeString()}] Identifying element "${step.elementName}" using ${step.locator.type}: "${resolvedLocatorValue}"`);
-      }
-
-      let stepStatus: 'Passed' | 'Failed' = 'Passed';
-      let stepError: { exceptionName: string; message: string; locator?: string } | undefined = undefined;
-      let excelRef: StepExecutionDetail['excelReference'] = undefined;
-
-      try {
-        // Execute NLP action logic
-        if (step.nlpId === 'get_data_from_excel') {
-          const fileName = resolvedParams.fileName;
-          const sheetName = resolvedParams.sheetName;
-          const uniqueData = resolvedParams.uniqueData;
-
-          logs.push(`[${new Date().toLocaleTimeString()}] Accessing Test Data file: ${fileName}, sheet: ${sheetName}`);
-          const fileRecord = this.data.testDataFiles.find(f =>
-            f.projectId === projectId && f.fileName.toLowerCase() === fileName.toLowerCase()
-          );
-
-          if (!fileRecord) {
-            throw new Error(`Test Data file "${fileName}" not found in project repository.`);
-          }
-
-          // Use real Excel parser or sample row map
-          let extractedData: Record<string, any> = {};
-          if (fileRecord.fileData) {
-            extractedData = AutomationEngine.readExcelRowMap(fileRecord.fileData, sheetName, uniqueData);
-          } else {
-            extractedData = { TC_ID: uniqueData, ProductName: 'Watch', VerificationText: 'Watches Few' };
-          }
-
-          excelRef = {
-            fileName,
-            sheetName,
-            uniqueData,
-            extractedData
-          };
-
-          logs.push(`[${new Date().toLocaleTimeString()}] Retrieved row for "${uniqueData}": ${JSON.stringify(extractedData)}`);
-        } else if (step.nlpId === 'write_data_to_excel') {
-          const fileName = resolvedParams.fileName;
-          const sheetName = resolvedParams.sheetName;
-          const uniqueData = resolvedParams.uniqueData;
-          const header = resolvedParams.header;
-          const writeBack = resolvedParams.writeBackData;
-
-          logs.push(`[${new Date().toLocaleTimeString()}] Updating Excel file: ${fileName}, Sheet: ${sheetName}, Key: ${uniqueData}, Col: ${header}`);
-          const fileRecord = this.data.testDataFiles.find(f =>
-            f.projectId === projectId && f.fileName.toLowerCase() === fileName.toLowerCase()
-          );
-
-          if (!fileRecord) {
-            throw new Error(`Test Data file "${fileName}" not found in project repository.`);
-          }
-
-          if (fileRecord.fileData) {
-            const { updatedBase64 } = AutomationEngine.writeExcelCell(
-              fileRecord.fileData,
-              sheetName,
-              uniqueData,
-              header,
-              writeBack
-            );
-            fileRecord.fileData = updatedBase64;
-          }
-
-          excelRef = {
-            fileName,
-            sheetName,
-            uniqueData,
-            header,
-            writeBackValue: writeBack
-          };
-
-          logs.push(`[${new Date().toLocaleTimeString()}] Wrote back value "${writeBack}" at intersection of [${uniqueData}, ${header}]`);
-        } else if (step.nlpId === 'verify_element_is_not_displayed' && step.parameters?.simulateFailure) {
-          throw new Error(`Assertion failed: Expected element to be hidden, but element remained visible`);
-        } else if (step.nlpId === 'verify_text' && step.parameters?.simulateFailure) {
-          throw new Error(`Assertion failed: Expected text "${resolvedParams.expectedText}" did not match actual text`);
-        }
-
-        logs.push(`[${new Date().toLocaleTimeString()}] Playwright command executed successfully. Condition satisfied.`);
-      } catch (err: any) {
-        stepStatus = 'Failed';
-        scriptStatus = 'Failed';
-        stepError = {
-          exceptionName: err.name || 'AssertionError',
-          message: err.message || 'Execution failed',
-          locator: resolvedLocatorValue
-        };
-        logs.push(`[${new Date().toLocaleTimeString()}] ERROR: ${err.message}`);
-      }
-
-      const stepEnd = Date.now();
-      const stepDuration = Number(((stepEnd - stepStart) / 1000).toFixed(2)) || 0.1;
-
-      // Determine screenshot capture according to Run Settings (Section 8.1)
-      let screenshot: string | undefined = undefined;
-      const shouldCapture = settings.screenshotOption === 'every-step' || (stepStatus === 'Failed' && settings.screenshotOption === 'failed-only');
-      if (shouldCapture) {
-        screenshot = AutomationEngine.generateScreenshotSvg(
-          step.nlpName,
-          stepStatus,
-          step.elementName ? `${step.elementName} (${resolvedLocatorValue || 'Mapped'})` : undefined,
-          resolvedParams.url,
-          stepError?.message
-        );
-      }
-
-      executedSteps.push({
-        stepNumber: step.stepNumber,
-        nlpName: step.nlpName,
-        nlpCategory: step.nlpCategory,
-        description: step.description,
-        status: stepStatus,
-        startedAt: stepStartDate,
-        completedAt: new Date(stepEnd).toISOString(),
-        durationSeconds: stepDuration,
-        element: step.elementId ? {
-          id: step.elementId,
-          name: step.elementName || 'UI Element',
-          page: step.pageName || 'Repository Page',
-          locatorType: step.locator?.type || 'ID',
-          locatorValue: resolvedLocatorValue || step.locator?.value || ''
-        } : undefined,
-        variablesUsed: stepVarsUsed.length > 0 ? stepVarsUsed : undefined,
-        inputParameters: resolvedParams,
-        excelReference: excelRef,
-        logs,
-        screenshot,
-        error: stepError
-      });
-
-      if (stepStatus === 'Failed') {
-        failureDetails = {
-          reason: stepError?.message || 'Step failure',
-          exceptionName: stepError?.exceptionName || 'Error',
-          errorMessage: stepError?.message || 'Unknown failure',
-          failedStepNumber: step.stepNumber,
-          failedLocator: resolvedLocatorValue,
-          screenshot,
-          logs
-        };
-        break; // Stop sequential execution on failure (Section 12)
-      }
-    }
-
-    const completedAt = new Date().toISOString();
-    const totalDuration = Number(((Date.now() - startTimestamp) / 1000).toFixed(1));
+    const completedAt = scriptExecution.completedAt || new Date().toISOString();
 
     // Update script last execution stats
-    script.lastExecutionStatus = scriptStatus;
+    script.lastExecutionStatus = scriptExecution.status;
     script.lastExecutionDate = completedAt;
 
     const executionRecord: DetailedExecutionRecord = {
       id: executionId,
       projectId,
       suiteName: `Single Script: ${script.name}`,
-      status: scriptStatus,
-      startedAt,
+      status: scriptExecution.status,
+      startedAt: scriptExecution.startedAt,
       completedAt,
-      durationSeconds: totalDuration,
+      durationSeconds: scriptExecution.durationSeconds,
       totalScripts: 1,
-      passedScripts: scriptStatus === 'Passed' ? 1 : 0,
-      failedScripts: scriptStatus === 'Failed' ? 1 : 0,
+      passedScripts: scriptExecution.status === 'Passed' ? 1 : 0,
+      failedScripts: scriptExecution.status === 'Failed' ? 1 : 0,
       runSettings: settings,
       machine: {
         name: os.hostname() || 'WORKSTATION-QA-01',
@@ -3233,23 +3097,14 @@ export class JsonDatabase {
         status: 'Ready'
       },
       nodeVersion: process.version,
-      playwrightVersion: '1.49.1',
-      scripts: [
-        {
-          scriptId: script.id,
-          scriptName: script.name,
-          moduleName: module?.name || 'General',
-          status: scriptStatus,
-          startedAt,
-          completedAt,
-          durationSeconds: totalDuration,
-          steps: executedSteps,
-          failureDetails
-        }
-      ]
+      playwrightVersion: '1.58.0',
+      scripts: [scriptExecution]
     };
 
     this.data.detailedExecutions.unshift(executionRecord);
+    if (this.data.detailedExecutions.length > 100) {
+      this.data.detailedExecutions.pop();
+    }
     this.save();
     return executionRecord;
   }

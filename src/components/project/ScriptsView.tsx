@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
+  Code,
   Code2,
   Folder,
   FolderPlus,
@@ -37,6 +38,7 @@ import {
   ExternalLink
 } from 'lucide-react';
 import { api } from '../../api/client';
+import { generatePlaywrightCode } from '../../utils/playwrightCodeGenerator';
 import {
   Project,
   ScriptModule,
@@ -125,6 +127,10 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
   const [tempSettings, setTempSettings] = useState<RunSettings>(runSettings);
   const [isRunningScript, setIsRunningScript] = useState(false);
 
+  // Playwright TypeScript Code Modal
+  const [isCodeModalOpen, setIsCodeModalOpen] = useState(false);
+  const [codeCopied, setCodeCopied] = useState(false);
+
   // Step Parameter Edit Drawer
   const [editingStep, setEditingStep] = useState<ScriptStep | null>(null);
 
@@ -155,9 +161,13 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
         setModules(modRes.modules);
         const rootIds = new Set(modRes.modules.filter((m: ScriptModule) => !m.parentId).map((m: ScriptModule) => m.id));
         setExpandedModuleIds(rootIds);
-        if (selectedModuleId === null && modRes.modules.length > 0) {
-          setSelectedModuleId(modRes.modules[0].id);
-        }
+        setSelectedModuleId(prev => {
+          if (prev && modRes.modules.some((m: ScriptModule) => m.id === prev)) {
+            return prev;
+          }
+          const firstRoot = modRes.modules.find((m: ScriptModule) => !m.parentId);
+          return firstRoot ? firstRoot.id : null;
+        });
       }
 
       if (scrRes.success && scrRes.scripts) {
@@ -205,7 +215,8 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
 
   const handleOpenCreateModule = (parentId: string | null = null, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
-    setModuleParentId(parentId);
+    const validParentId = parentId && modules.some(m => m.id === parentId) ? parentId : null;
+    setModuleParentId(validParentId);
     setModuleNameInput('');
     setModuleModalError(null);
     setIsModuleModalOpen(true);
@@ -227,6 +238,7 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
         setSelectedModuleId(res.module.id);
         setIsModuleModalOpen(false);
         showSuccessBanner(`Module "${res.module.name}" created successfully.`);
+        await loadAllData();
       } else {
         setModuleModalError(res.error || 'Failed to create module.');
       }
@@ -258,11 +270,15 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
     try {
       const res = await api.scripts.deleteModule(module.id, project.id);
       if (res.success) {
-        await loadAllData();
-        showSuccessBanner(`Module "${module.name}" and contained scripts deleted.`);
-        if (activeScript && activeScript.moduleId === module.id) {
+        setSelectedModuleId(null);
+        setModuleParentId(null);
+        if (activeScript && (activeScript.moduleId === module.id || !modules.some(m => m.id === activeScript.moduleId))) {
           setActiveScript(null);
         }
+        await loadAllData();
+        showSuccessBanner(`Module "${module.name}" and contained scripts deleted.`);
+      } else {
+        alert(res.error || 'Failed to delete module.');
       }
     } catch (err: any) {
       alert(err.message || 'Failed to delete module.');
@@ -271,9 +287,18 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
 
   // --- Script Operations ---
   const handleOpenCreateScript = () => {
-    if (!selectedModuleId) {
-      alert('Please select or create a module first.');
+    if (modules.length === 0) {
+      handleOpenCreateModule(null);
       return;
+    }
+    if (!selectedModuleId) {
+      const firstRoot = modules.find(m => !m.parentId);
+      if (firstRoot) {
+        setSelectedModuleId(firstRoot.id);
+      } else {
+        handleOpenCreateModule(null);
+        return;
+      }
     }
     setScriptNameInput('');
     setScriptDescInput('');
@@ -625,7 +650,22 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
 
         {/* Tree Container */}
         <div className="flex-1 overflow-y-auto p-2 space-y-1">
-          {modules.filter(m => !m.parentId).map(rootMod => {
+          {modules.length === 0 ? (
+            <div className="p-4 text-center rounded-xl border border-dashed border-slate-800 bg-slate-900/40 my-4">
+              <FolderPlus className="w-8 h-8 text-slate-500 mx-auto mb-2" />
+              <p className="text-xs text-slate-300 font-semibold">No modules created</p>
+              <p className="text-[11px] text-slate-500 mt-0.5 mb-3">Create a root module to get started</p>
+              <button
+                type="button"
+                onClick={() => handleOpenCreateModule(null)}
+                className="px-3 py-1.5 rounded-lg bg-brand-600 hover:bg-brand-500 text-white text-xs font-semibold inline-flex items-center gap-1.5 transition-all shadow-md shadow-brand-600/30"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Create Module</span>
+              </button>
+            </div>
+          ) : (
+            modules.filter(m => !m.parentId).map(rootMod => {
             const submodules = modules.filter(m => m.parentId === rootMod.id);
             const isExpanded = expandedModuleIds.has(rootMod.id);
             const isSelected = selectedModuleId === rootMod.id;
@@ -743,8 +783,9 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
                 )}
               </div>
             );
-          })}
-        </div>
+          })
+        )}
+      </div>
 
         {/* Global Variables Quick Access at bottom of left sidebar */}
         <div className="p-3 border-t border-slate-800 bg-slate-950/60">
@@ -796,7 +837,25 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
 
         {/* Scripts Grid */}
         <div className="flex-1 overflow-y-auto p-6 space-y-4">
-          {filteredScripts.length === 0 ? (
+          {modules.length === 0 ? (
+            <div className="h-96 flex flex-col items-center justify-center text-center p-8 rounded-2xl border border-dashed border-slate-800 bg-slate-900/20">
+              <div className="w-14 h-14 rounded-2xl bg-brand-500/10 border border-brand-500/20 flex items-center justify-center mb-4">
+                <FolderPlus className="w-7 h-7 text-brand-400" />
+              </div>
+              <h3 className="text-base font-bold text-white">No Modules in this Project</h3>
+              <p className="text-xs text-slate-400 mt-1 max-w-md">
+                Modules help you organize automation scripts hierarchically. Create your first module to get started.
+              </p>
+              <button
+                type="button"
+                onClick={() => handleOpenCreateModule(null)}
+                className="mt-5 px-5 py-2.5 rounded-xl bg-brand-600 hover:bg-brand-500 text-white text-xs font-semibold flex items-center gap-2 shadow-lg shadow-brand-600/30 transition-all hover:scale-[1.02]"
+              >
+                <FolderPlus className="w-4 h-4" />
+                <span>Create First Module</span>
+              </button>
+            </div>
+          ) : filteredScripts.length === 0 ? (
             <div className="h-96 flex flex-col items-center justify-center text-center p-8 rounded-2xl border border-dashed border-slate-800 bg-slate-900/20">
               <FileCode className="w-12 h-12 text-slate-600 mb-3" />
               <h3 className="text-sm font-semibold text-white">No scripts in this module</h3>
@@ -922,6 +981,16 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
               >
                 <DollarSign className="w-3.5 h-3.5 text-brand-400" />
                 <span>Variables</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsCodeModalOpen(true)}
+                className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700 flex items-center gap-1.5 transition-all"
+                title="View Playwright TypeScript Code"
+              >
+                <Code className="w-3.5 h-3.5 text-purple-400" />
+                <span>Playwright TS</span>
               </button>
 
               <button
@@ -1860,6 +1929,59 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* 11. Playwright TypeScript Code Modal */}
+      {isCodeModalOpen && activeScript && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fadeIn">
+          <div className="w-full max-w-3xl bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
+            <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-purple-500/10 border border-purple-500/20 text-purple-400">
+                  <Code className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <span>Generated Playwright TypeScript Code</span>
+                    <span className="text-[10px] font-mono font-medium px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                      @playwright/test
+                    </span>
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    Direct internal Playwright TypeScript mapping executed on the machine
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const code = generatePlaywrightCode(activeScript, repoElements, variables);
+                    navigator.clipboard.writeText(code);
+                    setCodeCopied(true);
+                    setTimeout(() => setCodeCopied(false), 2000);
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 flex items-center gap-1.5 border border-slate-700 transition-all font-medium"
+                >
+                  {codeCopied ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-slate-400" />}
+                  <span>{codeCopied ? 'Copied to Clipboard' : 'Copy Code'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsCodeModalOpen(false)}
+                  className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 bg-slate-950">
+              <pre className="font-mono text-xs text-purple-200 bg-slate-900/90 p-4 rounded-xl border border-slate-800/80 overflow-x-auto leading-relaxed selection:bg-purple-600/40">
+                {generatePlaywrightCode(activeScript, repoElements, variables)}
+              </pre>
+            </div>
+          </div>
         </div>
       )}
     </div>

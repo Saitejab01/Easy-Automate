@@ -361,6 +361,7 @@ export interface ScriptExecutionDetail {
     logs: string[];
   };
   screenRecordingUrl?: string;
+  generatedPlaywrightCode?: string;
 }
 
 export interface DetailedExecutionRecord {

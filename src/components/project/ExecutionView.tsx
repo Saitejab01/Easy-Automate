@@ -22,7 +22,9 @@ import {
   FileSpreadsheet,
   Cpu,
   RefreshCw,
-  HardDrive
+  HardDrive,
+  Code,
+  Copy
 } from 'lucide-react';
 import { api } from '../../api/client';
 import {
@@ -54,6 +56,10 @@ export const ExecutionView: React.FC<ExecutionViewProps> = ({ project, selectedE
 
   // Video playback simulation state
   const [isPlayingVideo, setIsPlayingVideo] = useState(false);
+
+  // Playwright TS Code modal
+  const [isCodeModalOpen, setIsCodeModalOpen] = useState(false);
+  const [codeCopied, setCodeCopied] = useState(false);
 
   useEffect(() => {
     loadExecutions();
@@ -317,6 +323,16 @@ export const ExecutionView: React.FC<ExecutionViewProps> = ({ project, selectedE
                     <span className="text-[10px] text-rose-500 uppercase font-semibold block">Failed</span>
                     <span className="text-xs font-mono font-bold text-rose-400">{activeExecution.failedScripts}</span>
                   </div>
+                )}
+                {activeScript?.generatedPlaywrightCode && (
+                  <button
+                    type="button"
+                    onClick={() => setIsCodeModalOpen(true)}
+                    className="px-3.5 py-2 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/30 text-xs font-semibold flex items-center gap-1.5 transition-all"
+                  >
+                    <Code className="w-4 h-4" />
+                    <span>Playwright TS</span>
+                  </button>
                 )}
               </div>
             </div>
@@ -708,6 +724,59 @@ export const ExecutionView: React.FC<ExecutionViewProps> = ({ project, selectedE
           </div>
         </div>
       )}
+
+      {/* 4. Playwright TypeScript Code Modal */}
+      {isCodeModalOpen && activeScript?.generatedPlaywrightCode && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fadeIn">
+          <div className="w-full max-w-3xl bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
+            <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-purple-500/10 border border-purple-500/20 text-purple-400">
+                  <Code className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <span>Executed Playwright TypeScript Code</span>
+                    <span className="text-[10px] font-mono font-medium px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                      @playwright/test
+                    </span>
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    Exact internal Playwright TypeScript mapping executed on the machine
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(activeScript.generatedPlaywrightCode || '');
+                    setCodeCopied(true);
+                    setTimeout(() => setCodeCopied(false), 2000);
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 flex items-center gap-1.5 border border-slate-700 transition-all font-medium"
+                >
+                  {codeCopied ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-slate-400" />}
+                  <span>{codeCopied ? 'Copied to Clipboard' : 'Copy Code'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsCodeModalOpen(false)}
+                  className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 bg-slate-950">
+              <pre className="font-mono text-xs text-purple-200 bg-slate-900/90 p-4 rounded-xl border border-slate-800/80 overflow-x-auto leading-relaxed selection:bg-purple-600/40">
+                {activeScript.generatedPlaywrightCode}
+              </pre>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+

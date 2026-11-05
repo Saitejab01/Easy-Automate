@@ -842,3 +842,4 @@ export const NLP_CATEGORIES: NlpCategory[] = [
   'Scroll',
   'Excel'
 ];
+
