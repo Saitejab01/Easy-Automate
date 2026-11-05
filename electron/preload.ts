@@ -18,6 +18,27 @@ export const electronAPI = {
     delete: (projectId: string, userId: string) =>
       ipcRenderer.invoke('projects:delete', { projectId, userId }),
   },
+  repository: {
+    getPages: (projectId: string) => ipcRenderer.invoke('repository:getPages', projectId),
+    createPage: (projectId: string, name: string, parentId?: string | null) =>
+      ipcRenderer.invoke('repository:createPage', { projectId, name, parentId }),
+    updatePage: (pageId: string, projectId: string, name: string) =>
+      ipcRenderer.invoke('repository:updatePage', { pageId, projectId, name }),
+    deletePage: (pageId: string, projectId: string) =>
+      ipcRenderer.invoke('repository:deletePage', { pageId, projectId }),
+
+    getElements: (projectId: string, pageId?: string) =>
+      ipcRenderer.invoke('repository:getElements', { projectId, pageId }),
+    createElement: (projectId: string, pageId: string, data: any) =>
+      ipcRenderer.invoke('repository:createElement', { projectId, pageId, data }),
+    updateElement: (elementId: string, projectId: string, data: any) =>
+      ipcRenderer.invoke('repository:updateElement', { elementId, projectId, data }),
+    deleteElement: (elementId: string, projectId: string) =>
+      ipcRenderer.invoke('repository:deleteElement', { elementId, projectId }),
+  },
+  dashboard: {
+    getStats: (projectId: string) => ipcRenderer.invoke('dashboard:getStats', projectId),
+  },
   email: {
     getSimulatedEmails: (toEmail?: string) => ipcRenderer.invoke('email:getSimulatedEmails', toEmail),
   },
@@ -29,4 +50,3 @@ export const electronAPI = {
 };
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI);
-

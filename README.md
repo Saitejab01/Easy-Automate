@@ -1,115 +1,114 @@
-# Easy Automate – Stage 1 Desktop Application (Electron + React + TypeScript)
+# Easy Automate – Stage 2 Desktop Application (Electron + React + TypeScript)
 
-Easy Automate is a web-based test automation platform that allows users to register, manage multiple projects, create test cases, and execute automation scripts using natural-language instructions (NLP) powered by **Playwright with TypeScript**.
+Easy Automate is a web-based test automation platform that allows users to register, manage multiple projects, maintain centralized UI element repositories, and execute automation scripts using natural-language instructions (NLP) powered by **Playwright with TypeScript**.
 
-This repository contains the complete **Stage 1** implementation built as an **Electron local desktop application**.
-
----
-
-## 🚀 Stage 1 Implemented Modules
-
-### 1. Landing Page
-- Accessible at `/`.
-- Features a modern, developer-focused UI highlighting Playwright + NLP architecture.
-- **Login** & **Register** options with clear CTAs.
-- Architecture summary and feature cards.
-
-### 2. Login Module
-- Accessible at `/login`.
-- **Email Validation**: Real-time regex format validation on the UI and database verification.
-- **Password Verification**: Validates passwords using **bcryptjs** cryptographic hash comparison.
-- **Error Handling**:
-  - Unregistered account warning.
-  - Invalid password warning.
-  - Unactivated account warning with a one-click shortcut to open the activation mail simulator.
-- Pre-configured demo account quick-fill: `demo@easyautomate.dev` / `P@ssword123`.
-
-### 3. Registration Module
-- Accessible at `/register`.
-- **Email Validation**: Format validation and uniqueness checks against the database.
-- Prevents duplicate registration if an account already exists and is activated.
-- **Activation Dispatch**: Initiates account activation process with a secure 24-hour cryptographic token.
-- Seamlessly pipes the activation notification into the built-in **In-App Mailbox Simulator**.
-
-### 4. Account Activation Module
-- Accessible at `/activate?token=...`.
-- Verifies the cryptographic token and ensures it has not expired or already been activated.
-- **Password & Confirm Password** inputs with a real-time 5-point validation checklist:
-  - Minimum 8 characters.
-  - At least one uppercase letter (`[A-Z]`).
-  - At least one lowercase letter (`[a-z]`).
-  - At least one number (`[0-9]`).
-  - At least one special character (`[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]`).
-  - Confirm Password matches Password.
-- Hashes the password using `bcryptjs` and marks the account as active with activation timestamp.
-
-### 5. Project Management Module
-Two-level project navigation:
-- **All Projects Page** (`/projects`):
-  - Lists all projects belonging to the logged-in user (multi-user isolation).
-  - Search & filter projects by name, description, or target URL.
-  - Project statistics counter.
-  - **Create New Project Modal**:
-    - Project Name field with strict length and duplicate validation.
-    - Description, Base URL, Environment (`development`, `staging`, `production`), and Default Browser (`chromium`, `firefox`, `webkit`).
-    - Immediate UI update upon creation.
-- **Individual Project Page** (`/projects/:id`):
-  - Dedicated page with breadcrumb navigation back to All Projects.
-  - Displays project details, environment configuration, and target URL.
-  - **Tabs**:
-    - **Overview**: Environment configuration and Playwright engine status.
-    - **Test Cases**: Test scenario listing.
-    - **NLP Engine**: Interactive playground demonstrating conversion of natural-language instructions (e.g. *"Login to the application using valid credentials and verify that the dashboard is displayed"*) into Playwright TypeScript code.
-    - **Settings**: Edit project details or delete project.
-
-### 6. Local In-App Mailbox Simulator
-- Accessible globally from the navigation bar.
-- Simulates outgoing emails locally so developers can test the complete email activation flow without needing a live SMTP server.
-- Provides direct "Click Activation Link" buttons.
+This repository contains the complete **Stage 1** (Auth, Activation & Projects) and **Stage 2** (Individual Project Workspace, Project Dashboard & UI Element Repository) implementations built as an **Electron local desktop application**.
 
 ---
 
-## 🛠️ Technology Stack
+## 🚀 Stage 2 Implemented Modules
 
-| Layer | Technology |
-|---|---|
-| **Desktop Shell** | Electron 34 with secure context isolation & IPC channels |
-| **Frontend** | React 19, TypeScript, Vite 6, Tailwind CSS |
-| **Icons & Styling** | Lucide React, Tailwind CSS |
-| **Routing** | React Router (HashRouter for Electron compatibility) |
-| **Authentication** | Cryptographic tokens & bcryptjs password hashing |
-| **Local Database** | File-backed JSON database engine stored in `userData` directory with multi-user isolation |
-| **Validation** | Zod + Client-side RegEx validators |
+### 1. Dedicated Individual Project Workspace
+Accessible by selecting any project from the All Projects list:
+- **Collapsible Sidebar Navigation:**
+  1. **Dashboard** *(Implemented)*
+  2. **Repository** *(Implemented)*
+  3. **Test Data** *(Stage 3 Navigation Placeholder)*
+  4. **TestDev** *(Collapsible group)*
+     - **Scripts** *(Stage 3 Navigation Placeholder)*
+     - **Execution** *(Stage 4 Navigation Placeholder)*
+  5. **Suites** *(Stage 4 Navigation Placeholder)*
+- **Project Settings & Environment Status:** Quick switcher for baseUrl, default browser, and environment.
+
+---
+
+### 2. Module 1: Project Dashboard
+- **2.1 Project Overview Cards:**
+  - **Total Scripts:** Automation scripts in the project.
+  - **Total Elements:** Real-time count of UI elements stored in the Repository.
+  - **Total Suites:** Active test suites configured in the project.
+  - **Suite Executions:** Total historical test suite runs.
+  - **Passed Executions:** Successful runs with visual pass rate percentage.
+  - **Failed Executions:** Runs requiring triage.
+- **2.2 Execution Overview:**
+  - Status badges (`Passed`, `Failed`, `Running`, `Aborted`).
+  - Execution timestamps, durations (e.g. `1m 34s`), and test results count (Passed/Failed).
+- **2.3 Machine Details:**
+  - Telemetry for the active execution node:
+    - **Machine Name:** e.g. `WORKSTATION-QA-01`
+    - **Operating System:** e.g. `Windows 11 Pro 64-bit`
+    - **Browser Name & Version:** e.g. `Chromium v131.0.6778.86`
+    - **Environment:** `development` / `staging` / `production`
+    - **Status:** `Ready` / `Online`
+- **2.4 Telemetry Visuals:**
+  - Real-time pass rate distribution bar and health indicators.
+
+---
+
+### 3. Module 2: Repository (UI Element Store)
+- **3.1 Hierarchical Tree View:**
+  - Multi-level structure: **Pages ➔ Subpages ➔ Elements**.
+  - Default seed repository showcasing the requirements example:
+    - `Login Page` (Email Field, Password Field, Login Button, Forgot Password Link)
+    - `Home Page` ➔ `Header Section` (Profile Icon, Search Field)
+    - `Home Page` ➔ `Product Section` (Product Name, Add To Cart Button)
+    - `Cart Page` (Cart Items Table, Checkout Button)
+  - Expand all and collapse all tree operations.
+  - Page & subpage element counts.
+- **3.2 Repository Operations:**
+  - Create new root pages.
+  - Create nested subpages under any page.
+  - Rename pages and subpages with real-time uniqueness validation.
+  - Cascade deletion (deleting a page cleanly removes child subpages and their elements).
+  - Search and filter elements across locators and names.
+- **3.3 & 3.4 Add/Edit Element Right-Side Drawer:**
+  - Smooth slide-over panel from the right edge.
+  - **Element Name** (mandatory).
+  - **Element Type** (mandatory): `Button`, `Input Field`, `Link`, `Dropdown / Select`, `Checkbox`, `Radio Button`, `Text / Label`, `Image`, `Table`, `Modal`, `Card`, `Container`, `Custom`.
+  - **Page Assignment:** Dropdown to select or reassign parent page/subpage.
+  - **Multiple Locator Support:** Configure multiple locator strategies for each element:
+    - Supported types: `ID`, `Name`, `XPath`, `CSS Selector`, `Class Name`, `Link Text`, `Partial Link Text`, `Tag Name`, `Text`, `Role`, `Placeholder`, `Label`, `Test ID`.
+    - Mark primary strategy.
+    - Add, edit, or remove individual locators.
+- **3.5 & 3.6 Static & Dynamic Locator Support with Auto-Suggestions:**
+  - Supports static locators: `//button[@name='login']`.
+  - Supports dynamic locators with placeholders: `//button[@name='{dynamic value1}' and @text='{dynamic value2}']`.
+  - **Interactive Dynamic Suggestions Dropdown:**
+    - Typing `{` inside the locator value input immediately displays suggestion options.
+    - Click to insert auto-incrementing sequential variables: `{dynamic value1}`, `{dynamic value2}`.
+    - Or insert descriptive dynamic variables: `{dynamic text}`, `{dynamic id}`.
+    - Visual pills display all detected dynamic placeholders below the input.
+- **3.7 Validation Engine:**
+  - Validates mandatory fields (Element Name, Element Type, Target Page).
+  - Ensures at least one valid locator configuration.
+  - Enforces matching braces `{` and `}` for dynamic placeholder syntax before saving.
+
+---
+
+### 4. Navigation Placeholders (Stages 3 & 4)
+- **Test Data:** Preview of data-driven automation with Excel (`.xlsx` and `.xls`) datasets.
+- **TestDev – Scripts:** Preview of Playwright TypeScript script composer and NLP generation.
+- **TestDev – Execution:** Preview of BullMQ background execution queue and screenshot viewer.
+- **Suites:** Preview of suite orchestration and batch runs.
 
 ---
 
 ## 🏃 How to Run
 
 ### Development Mode (with Live Hot Reload)
-```bash
+```powershell
 npm run dev
 ```
-Starts the Vite dev server on `http://localhost:5173` and launches the Electron desktop window.
+Starts the Vite dev server and opens the Electron desktop window.
 
 ### Production Build & Launch
-```bash
-# Build both frontend assets and Electron main process
+```powershell
 npm run build
-
-# Start the packaged Electron app
 npm start
 ```
 
-### Browser Preview (Optional)
-If you prefer previewing solely in a web browser without launching Electron:
-```bash
-npm run dev:renderer
-```
-Open `http://localhost:5173` in any browser. The built-in client fallback automatically activates LocalStorage persistence.
-
-### Run Automated Tests
-```bash
+### Run Automated Tests (Stage 1 & Stage 2 Test Suites)
+```powershell
 npm test
 ```
-Executes the comprehensive verification test suite covering user registration, activation tokens, bcrypt password hashing, unactivated account rejection, project creation, validation, and user isolation.
-
+Verifies all Stage 1 authentication and project isolation requirements, plus all Stage 2 Dashboard metrics, hierarchical page tree management, dynamic placeholder suggestions, and multiple locator validations.

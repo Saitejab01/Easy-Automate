@@ -30,3 +30,4 @@ const handleTerminationSignal = function (signal) {
 
 handleTerminationSignal('SIGINT');
 handleTerminationSignal('SIGTERM');
+

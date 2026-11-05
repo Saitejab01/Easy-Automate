@@ -9,7 +9,7 @@
     "build:electron": "tsc -p tsconfig.electron.json",
     "dev": "cross-env NODE_ENV=development concurrently -k \"vite\" \"wait-on tcp:5173 && node run-electron.js .\"",
     "build": "npm run build:renderer && npm run build:electron",
-    "test": "npm run build:electron && node test-stage1.js",
+    "test": "npm run build:electron && node test-stage1.js && node test-stage2.js",
     "start": "node run-electron.js ."
   },
   "dependencies": {
