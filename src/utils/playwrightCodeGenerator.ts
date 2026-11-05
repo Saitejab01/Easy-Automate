@@ -51,9 +51,12 @@ export function generatePlaywrightCode(
       const locatorCode = getPlaywrightLocatorCode(step.locator, step.parameters?.dynamicValues);
 
       switch (step.nlpId) {
-        case 'open_browser':
+        case 'open_browser': {
+          lines.push(`  // Browser launched and initialized`);
+          break;
+        }
         case 'navigate_to_url': {
-          const url = resolvedParams.url || 'https://example.com';
+          const url = resolvedParams.url || '';
           lines.push(`  await page.goto('${url}', { waitUntil: 'domcontentloaded' });`);
           break;
         }
@@ -286,3 +289,4 @@ function getPlaywrightLocatorCode(locator: any, dynamicValues?: Record<string, s
       return `page.locator('${escaped}')`;
   }
 }
+

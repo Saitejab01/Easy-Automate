@@ -492,34 +492,6 @@ export class JsonDatabase {
       hasChanges = true;
     }
 
-    // 2. Seed Repository Pages, Elements, Executions, and Stage 3 Test Data for projects if empty
-    for (const proj of this.data.projects) {
-      if (!this.data.repositorySeededProjects) this.data.repositorySeededProjects = [];
-      const existingPages = this.data.pages.filter(p => p.projectId === proj.id);
-      if (existingPages.length === 0 && !this.data.repositorySeededProjects.includes(proj.id)) {
-        this.seedProjectRepository(proj.id);
-        this.seedProjectExecutions(proj.id);
-        this.data.repositorySeededProjects.push(proj.id);
-        hasChanges = true;
-      }
-
-      if (!this.data.testDataSeededProjects) this.data.testDataSeededProjects = [];
-      const existingTestData = this.data.testDataFolders.filter(f => f.projectId === proj.id);
-      if (existingTestData.length === 0 && !this.data.testDataSeededProjects.includes(proj.id)) {
-        this.seedProjectTestData(proj.id, 'demo@easyautomate.dev');
-        this.data.testDataSeededProjects.push(proj.id);
-        hasChanges = true;
-      }
-
-      if (!this.data.scriptsSeededProjects) this.data.scriptsSeededProjects = [];
-      const existingModules = this.data.scriptModules.filter(m => m.projectId === proj.id);
-      if (existingModules.length === 0 && !this.data.scriptsSeededProjects.includes(proj.id)) {
-        this.seedProjectScripts(proj.id, 'demo@easyautomate.dev');
-        this.data.scriptsSeededProjects.push(proj.id);
-        hasChanges = true;
-      }
-    }
-
     if (hasChanges) {
       this.save();
     }
@@ -1102,9 +1074,6 @@ export class JsonDatabase {
     };
 
     this.data.projects.push(newProject);
-    this.seedProjectRepository(newProject.id);
-    this.seedProjectExecutions(newProject.id);
-    this.seedProjectTestData(newProject.id, 'user@easyautomate.dev');
     this.save();
     return newProject;
   }
@@ -1367,36 +1336,69 @@ export class JsonDatabase {
 
   public getProjectDashboardStats(projectId: string): ProjectStats {
     const elements = this.data.elements.filter(e => e.projectId === projectId);
-    const executions = this.data.executions
+    const scripts = this.data.scripts.filter(s => s.projectId === projectId);
+
+    // Map detailedExecutions into ExecutionRecord format
+    const detailedRecords: ExecutionRecord[] = (this.data.detailedExecutions || [])
       .filter(e => e.projectId === projectId)
+      .map(de => ({
+        id: de.id,
+        projectId: de.projectId,
+        suiteName: de.suiteName || 'Script Execution',
+        status: (de.status === 'Passed' ? 'Passed' : de.status === 'Failed' ? 'Failed' : 'Aborted') as any,
+        startedAt: de.startedAt,
+        durationSeconds: de.durationSeconds || 0,
+        totalTests: de.totalScripts || 1,
+        passedTests: de.passedScripts || (de.status === 'Passed' ? 1 : 0),
+        failedTests: de.failedScripts || (de.status === 'Failed' ? 1 : 0),
+        environment: 'development' as const,
+        machine: (de.machine as any) || {
+          name: 'LOCAL-WORKSTATION',
+          os: 'Windows 11',
+          browser: 'Chromium',
+          version: 'Playwright Ready',
+          environment: 'development' as const,
+          status: 'Ready' as const
+        }
+      }));
+
+    const standardRecords = (this.data.executions || [])
+      .filter(e => e.projectId === projectId && !detailedRecords.some(dr => dr.id === e.id));
+
+    const combinedExecutions = [...detailedRecords, ...standardRecords]
       .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
 
-    const totalScripts = 14;
-    const totalSuites = 4;
-    const suiteExecutions = executions.length;
-    const passedExecutions = executions.filter(e => e.status === 'Passed').length;
-    const failedExecutions = executions.filter(e => e.status === 'Failed').length;
-    const passRate = suiteExecutions > 0 ? Math.round((passedExecutions / suiteExecutions) * 100) : 100;
+    const totalScripts = scripts.length;
+    const totalElements = elements.length;
+    const totalSuites = 0;
+    const suiteExecutions = combinedExecutions.length;
+    const passedExecutions = combinedExecutions.filter(e => e.status === 'Passed').length;
+    const failedExecutions = combinedExecutions.filter(e => e.status === 'Failed').length;
+    const passRate = suiteExecutions > 0 ? Math.round((passedExecutions / suiteExecutions) * 100) : 0;
 
-    const defaultMachine = executions[0]?.machine || {
-      name: 'LOCAL-WORKSTATION-X1',
-      os: 'Windows 11 Pro 64-bit',
-      browser: 'Chromium',
-      version: '131.0.6778.86',
-      environment: 'staging',
-      status: 'Ready'
-    };
+    let machine = combinedExecutions[0]?.machine;
+    if (!machine) {
+      const os = require('os');
+      machine = {
+        name: os.hostname(),
+        os: `${os.type()} ${os.release()} (${os.arch()})`,
+        browser: 'Chromium',
+        version: 'Playwright Ready',
+        environment: 'development',
+        status: 'Ready'
+      };
+    }
 
     return {
       totalScripts,
-      totalElements: elements.length,
+      totalElements,
       totalSuites,
       suiteExecutions,
       passedExecutions,
       failedExecutions,
       passRate,
-      recentExecutions: executions,
-      activeMachine: defaultMachine
+      recentExecutions: combinedExecutions,
+      activeMachine: machine
     };
   }
 

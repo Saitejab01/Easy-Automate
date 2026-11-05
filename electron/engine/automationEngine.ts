@@ -67,10 +67,17 @@ export class AutomationEngine {
         const locatorCode = this.getPlaywrightLocatorCode(step.locator, step.parameters?.dynamicValues);
 
         switch (step.nlpId) {
-          case 'open_browser':
+          case 'open_browser': {
+            lines.push(`  // Browser opened and blank page initialized`);
+            break;
+          }
           case 'navigate_to_url': {
-            const url = resolvedParams.url || 'https://example.com';
+            const url = resolvedParams.url || '';
             lines.push(`  await page.goto('${url}', { waitUntil: 'domcontentloaded' });`);
+            break;
+          }
+          case 'close_browser': {
+            lines.push(`  await browser.close();`);
             break;
           }
           case 'maximize_browser': {
@@ -364,12 +371,15 @@ export class AutomationEngine {
     let browserContext: any = null;
     let page: any = null;
 
-    if (playwrightModule) {
+    const ensureBrowserReady = async (chosenBrowser?: string) => {
+      if (page && !page.isClosed()) return page;
+      if (!playwrightModule) return null;
       try {
+        const b = (chosenBrowser || settings.browser || 'chromium').toLowerCase();
         const browserType =
-          settings.browser === 'firefox'
+          b === 'firefox'
             ? playwrightModule.firefox
-            : settings.browser === 'webkit'
+            : b === 'webkit'
             ? playwrightModule.webkit
             : playwrightModule.chromium;
 
@@ -398,6 +408,11 @@ export class AutomationEngine {
       } catch (err: any) {
         console.warn('Could not launch Playwright browser instance, falling back to simulation:', err);
       }
+      return page;
+    };
+
+    if (playwrightModule) {
+      await ensureBrowserReady();
     }
 
     // Generate Playwright TypeScript code for transparency
@@ -444,57 +459,55 @@ export class AutomationEngine {
       let excelRef: any = undefined;
 
       try {
+        if (!page || page.isClosed()) {
+          await ensureBrowserReady();
+        }
+
         if (page && !page.isClosed()) {
           // REAL PLAYWRIGHT EXECUTION ON BROWSER
           switch (step.nlpId) {
-            case 'open_browser':
-            case 'navigate_to_url': {
-              let url = resolvedParams.url || 'https://ecommerce-playground.demo';
-              if (!url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('data:') && !url.startsWith('file:')) {
-                url = 'https://' + url;
+            case 'open_browser': {
+              const bEngine = resolvedParams.browser || settings.browser || 'Chromium';
+              if (!page || page.isClosed()) {
+                await ensureBrowserReady(bEngine);
               }
-              logs.push(`[${new Date().toLocaleTimeString()}] Navigating to URL: ${url}`);
-              try {
-                await page.goto(url, { waitUntil: 'domcontentloaded', timeout: waitTimeMs });
-              } catch (navErr: any) {
-                // If offline / demo mock URL doesn't resolve in sandbox, load responsive demo template
-                logs.push(`[${new Date().toLocaleTimeString()}] Network navigation fallback: loading mock sandbox DOM for "${url}"`);
-                await page.setContent(`
-                  <!DOCTYPE html>
-                  <html>
-                    <head>
-                      <title>${resolvedParams.expectedTitle || 'Easy Automate Storefront'}</title>
-                      <style>
-                        body { font-family: system-ui, sans-serif; background: #0f172a; color: #f8fafc; padding: 2rem; }
-                        input, button { padding: 0.5rem 1rem; border-radius: 6px; margin: 0.5rem 0; }
-                        button { background: #6366f1; color: white; border: none; cursor: pointer; }
-                        .card { background: #1e293b; padding: 1.5rem; border-radius: 8px; margin-bottom: 1rem; }
-                      </style>
-                    </head>
-                    <body>
-                      <div class="card">
-                        <h1>Storefront Demo Application</h1>
-                        <p>Logged in environment: Staging / Dev</p>
-                        <form id="loginForm">
-                          <div><input id="email" name="email" type="email" placeholder="Search products..." value="user@example.com"/></div>
-                          <div><input id="password" name="password" type="password" value="secret123"/></div>
-                          <button id="loginButton" name="login" class="login-btn" type="button">Login</button>
-                        </form>
-                        <div class="product-card">
-                          <h3 class="product-title title">Watch</h3>
-                          <button data-product-id="watch101">Add to Cart</button>
-                        </div>
-                      </div>
-                    </body>
-                  </html>
-                `);
-              }
+              logs.push(`[${new Date().toLocaleTimeString()}] Browser (${bEngine}) launched successfully. Clean blank page initialized.`);
               break;
             }
 
             case 'maximize_browser': {
               await page.setViewportSize({ width: 1920, height: 1080 });
-              logs.push(`[${new Date().toLocaleTimeString()}] Viewport maximized to 1920x1080`);
+              logs.push(`[${new Date().toLocaleTimeString()}] Browser window maximized (1920x1080)`);
+              break;
+            }
+
+            case 'navigate_to_url': {
+              const rawUrl = (resolvedParams.url || '').trim();
+              if (!rawUrl) {
+                throw new Error('Navigate To URL failed: Target URL parameter is required.');
+              }
+              let url = rawUrl;
+              if (!url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('data:') && !url.startsWith('file:')) {
+                url = 'https://' + url;
+              }
+              logs.push(`[${new Date().toLocaleTimeString()}] Navigating to URL: ${url}`);
+              await page.goto(url, { waitUntil: 'domcontentloaded', timeout: waitTimeMs });
+              let currentTitle = '';
+              try {
+                currentTitle = await page.title();
+              } catch {}
+              logs.push(`[${new Date().toLocaleTimeString()}] Successfully navigated to "${url}". Page title: "${currentTitle}"`);
+              break;
+            }
+
+            case 'close_browser': {
+              if (browser) {
+                await browser.close();
+                browser = null;
+                browserContext = null;
+                page = null;
+              }
+              logs.push(`[${new Date().toLocaleTimeString()}] Browser closed successfully`);
               break;
             }
 

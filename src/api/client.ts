@@ -486,37 +486,8 @@ function saveLocalElements(elements: RepositoryElement[], projectId: string) {
 function getLocalTestDataFolders(projectId: string): TestDataFolder[] {
   try {
     const raw = localStorage.getItem(LS_TD_FOLDERS);
-    let allFolders: TestDataFolder[] = raw ? JSON.parse(raw) : [];
-    let projectFolders = allFolders.filter(f => f.projectId === projectId);
-    if (projectFolders.length === 0) {
-      const now = new Date().toISOString();
-      const fLogin = 'fld_login_' + projectId.slice(-4);
-      const fLoginValid = 'fld_login_v_' + projectId.slice(-4);
-      const fLoginInvalid = 'fld_login_i_' + projectId.slice(-4);
-      const fProduct = 'fld_prod_' + projectId.slice(-4);
-      const fProductSearch = 'fld_prod_s_' + projectId.slice(-4);
-      const fProductCart = 'fld_prod_c_' + projectId.slice(-4);
-      const fPayment = 'fld_pay_' + projectId.slice(-4);
-      const fPaymentCC = 'fld_pay_cc_' + projectId.slice(-4);
-      const fPaymentUPI = 'fld_pay_upi_' + projectId.slice(-4);
-      const fRegistration = 'fld_reg_' + projectId.slice(-4);
-
-      projectFolders = [
-        { id: fLogin, projectId, name: 'Login Module', parentId: null, createdAt: now, updatedAt: now },
-        { id: fLoginValid, projectId, name: 'Valid Login', parentId: fLogin, createdAt: now, updatedAt: now },
-        { id: fLoginInvalid, projectId, name: 'Invalid Login', parentId: fLogin, createdAt: now, updatedAt: now },
-        { id: fProduct, projectId, name: 'Product Module', parentId: null, createdAt: now, updatedAt: now },
-        { id: fProductSearch, projectId, name: 'Product Search', parentId: fProduct, createdAt: now, updatedAt: now },
-        { id: fProductCart, projectId, name: 'Add To Cart', parentId: fProduct, createdAt: now, updatedAt: now },
-        { id: fPayment, projectId, name: 'Payment Module', parentId: null, createdAt: now, updatedAt: now },
-        { id: fPaymentCC, projectId, name: 'Credit Card', parentId: fPayment, createdAt: now, updatedAt: now },
-        { id: fPaymentUPI, projectId, name: 'UPI', parentId: fPayment, createdAt: now, updatedAt: now },
-        { id: fRegistration, projectId, name: 'Registration Module', parentId: null, createdAt: now, updatedAt: now }
-      ];
-      allFolders.push(...projectFolders);
-      localStorage.setItem(LS_TD_FOLDERS, JSON.stringify(allFolders));
-    }
-    return projectFolders;
+    const allFolders: TestDataFolder[] = raw ? JSON.parse(raw) : [];
+    return allFolders.filter(f => f.projectId === projectId);
   } catch {
     return [];
   }
@@ -534,141 +505,13 @@ function saveLocalTestDataFolders(folders: TestDataFolder[], projectId: string) 
 function getLocalTestDataFiles(projectId: string): TestDataFile[] {
   try {
     const raw = localStorage.getItem(LS_TD_FILES);
-    let allFiles: TestDataFile[] = raw ? JSON.parse(raw) : [];
-    let projectFiles = allFiles.filter(f => f.projectId === projectId);
-    if (projectFiles.length === 0) {
-      const now = new Date().toISOString();
-      const folders = getLocalTestDataFolders(projectId);
-      const fLoginValid = folders.find(f => f.name === 'Valid Login')?.id || null;
-      const fLoginInvalid = folders.find(f => f.name === 'Invalid Login')?.id || null;
-      const fProductSearch = folders.find(f => f.name === 'Product Search')?.id || null;
-      const fProductCart = folders.find(f => f.name === 'Add To Cart')?.id || null;
-      const fPaymentCC = folders.find(f => f.name === 'Credit Card')?.id || null;
-      const fPaymentUPI = folders.find(f => f.name === 'UPI')?.id || null;
-      const fRegistration = folders.find(f => f.name === 'Registration Module')?.id || null;
-
-      projectFiles = [
-        {
-          id: 'file_01_' + projectId.slice(-4),
-          projectId,
-          folderId: fLoginValid,
-          fileName: 'valid_login_data.xlsx',
-          fileFormat: '.xlsx',
-          fileSizeBytes: 24576,
-          fileSizeFormatted: '24.0 KB',
-          uploadedBy: 'demo@easyautomate.dev',
-          uploadedAt: new Date(Date.now() - 86400000 * 2).toISOString(),
-          sheetNames: ['Credentials', 'Tokens'],
-          rowCount: 12,
-          description: 'Standard valid user credentials and expected dashboard headings'
-        },
-        {
-          id: 'file_02_' + projectId.slice(-4),
-          projectId,
-          folderId: fLoginInvalid,
-          fileName: 'invalid_login_data.xlsx',
-          fileFormat: '.xlsx',
-          fileSizeBytes: 18432,
-          fileSizeFormatted: '18.0 KB',
-          uploadedBy: 'demo@easyautomate.dev',
-          uploadedAt: new Date(Date.now() - 86400000 * 2).toISOString(),
-          sheetNames: ['BadEmails', 'LockedAccounts'],
-          rowCount: 20,
-          description: 'Malformed emails, locked passwords, and error message assertions'
-        },
-        {
-          id: 'file_03_' + projectId.slice(-4),
-          projectId,
-          folderId: fProductSearch,
-          fileName: 'product_search_data.xlsx',
-          fileFormat: '.xlsx',
-          fileSizeBytes: 32768,
-          fileSizeFormatted: '32.0 KB',
-          uploadedBy: 'demo@easyautomate.dev',
-          uploadedAt: new Date(Date.now() - 86400000).toISOString(),
-          sheetNames: ['SearchKeywords', 'Filters'],
-          rowCount: 45,
-          description: 'Product queries, SKUs, and category filter matrices'
-        },
-        {
-          id: 'file_04_' + projectId.slice(-4),
-          projectId,
-          folderId: fProductCart,
-          fileName: 'cart_valid_data.xlsx',
-          fileFormat: '.xlsx',
-          fileSizeBytes: 28672,
-          fileSizeFormatted: '28.0 KB',
-          uploadedBy: 'demo@easyautomate.dev',
-          uploadedAt: new Date(Date.now() - 86400000).toISOString(),
-          sheetNames: ['Items', 'Coupons'],
-          rowCount: 18,
-          description: 'Cart additions, discounts, and quantity adjustments'
-        },
-        {
-          id: 'file_05_' + projectId.slice(-4),
-          projectId,
-          folderId: fProductCart,
-          fileName: 'cart_invalid_data.xlsx',
-          fileFormat: '.xlsx',
-          fileSizeBytes: 14336,
-          fileSizeFormatted: '14.0 KB',
-          uploadedBy: 'demo@easyautomate.dev',
-          uploadedAt: new Date(Date.now() - 86400000).toISOString(),
-          sheetNames: ['OutOfStock', 'MaxLimit'],
-          rowCount: 10,
-          description: 'Out-of-stock items and quantity limit validation'
-        },
-        {
-          id: 'file_06_' + projectId.slice(-4),
-          projectId,
-          folderId: fPaymentCC,
-          fileName: 'credit_card_data.xlsx',
-          fileFormat: '.xlsx',
-          fileSizeBytes: 21504,
-          fileSizeFormatted: '21.0 KB',
-          uploadedBy: 'demo@easyautomate.dev',
-          uploadedAt: new Date(Date.now() - 3600000 * 8).toISOString(),
-          sheetNames: ['SandboxCards', 'CVV'],
-          rowCount: 15,
-          description: 'Test Visa, Mastercard, Amex numbers and CVV formats'
-        },
-        {
-          id: 'file_07_' + projectId.slice(-4),
-          projectId,
-          folderId: fPaymentUPI,
-          fileName: 'upi_data.xlsx',
-          fileFormat: '.xlsx',
-          fileSizeBytes: 16384,
-          fileSizeFormatted: '16.0 KB',
-          uploadedBy: 'demo@easyautomate.dev',
-          uploadedAt: new Date(Date.now() - 3600000 * 6).toISOString(),
-          sheetNames: ['UPI_IDs', 'Timeouts'],
-          rowCount: 14,
-          description: 'Virtual payment addresses for mock gateway tests'
-        },
-        {
-          id: 'file_08_' + projectId.slice(-4),
-          projectId,
-          folderId: fRegistration,
-          fileName: 'registration_data.xlsx',
-          fileFormat: '.xlsx',
-          fileSizeBytes: 35840,
-          fileSizeFormatted: '35.0 KB',
-          uploadedBy: 'demo@easyautomate.dev',
-          uploadedAt: new Date(Date.now() - 3600000 * 2).toISOString(),
-          sheetNames: ['NewUsers', 'Roles'],
-          rowCount: 50,
-          description: 'User registration profiles, passwords, and security questions'
-        }
-      ];
-      allFiles.push(...projectFiles);
-      localStorage.setItem(LS_TD_FILES, JSON.stringify(allFiles));
-    }
-    return projectFiles;
+    const allFiles: TestDataFile[] = raw ? JSON.parse(raw) : [];
+    return allFiles.filter(f => f.projectId === projectId);
   } catch {
     return [];
   }
 }
+
 
 function saveLocalTestDataFiles(files: TestDataFile[], projectId: string) {
   try {
@@ -1233,102 +1076,27 @@ export const api = {
     async getStats(projectId: string): Promise<{ success: boolean; stats?: ProjectStats; error?: string }> {
       if (isElectron) return (window as any).electronAPI.dashboard.getStats(projectId);
       const elements = getLocalElements(projectId);
+      const scripts = getLocalScripts(projectId);
+      const executions = getLocalExecutions(projectId);
+      const suiteExecutions = executions.length;
+      const passedExecutions = executions.filter((e: any) => e.status === 'Passed').length;
+      const failedExecutions = executions.filter((e: any) => e.status === 'Failed').length;
+      const passRate = suiteExecutions > 0 ? Math.round((passedExecutions / suiteExecutions) * 100) : 0;
       const stats: ProjectStats = {
-        totalScripts: 14,
+        totalScripts: scripts.length,
         totalElements: elements.length,
-        totalSuites: 4,
-        suiteExecutions: 4,
-        passedExecutions: 3,
-        failedExecutions: 1,
-        passRate: 75,
-        recentExecutions: [
-          {
-            id: 'exec_01_' + projectId.slice(-4),
-            projectId,
-            suiteName: 'Regression Suite - Smoke & Checkout',
-            status: 'Passed',
-            startedAt: new Date(Date.now() - 1000 * 60 * 35).toISOString(),
-            durationSeconds: 94,
-            totalTests: 18,
-            passedTests: 18,
-            failedTests: 0,
-            environment: 'staging',
-            machine: {
-              name: 'WORKSTATION-QA-01',
-              os: 'Windows 11 Pro 64-bit',
-              browser: 'Chromium',
-              version: '131.0.6778.86',
-              environment: 'staging',
-              status: 'Ready'
-            }
-          },
-          {
-            id: 'exec_02_' + projectId.slice(-4),
-            projectId,
-            suiteName: 'Authentication & Security Suite',
-            status: 'Passed',
-            startedAt: new Date(Date.now() - 1000 * 60 * 60 * 3).toISOString(),
-            durationSeconds: 42,
-            totalTests: 8,
-            passedTests: 8,
-            failedTests: 0,
-            environment: 'development',
-            machine: {
-              name: 'WORKSTATION-QA-01',
-              os: 'Windows 11 Pro 64-bit',
-              browser: 'Chromium',
-              version: '131.0.6778.86',
-              environment: 'development',
-              status: 'Ready'
-            }
-          },
-          {
-            id: 'exec_03_' + projectId.slice(-4),
-            projectId,
-            suiteName: 'Payment Gateway Integration Matrix',
-            status: 'Failed',
-            startedAt: new Date(Date.now() - 1000 * 60 * 60 * 18).toISOString(),
-            durationSeconds: 128,
-            totalTests: 12,
-            passedTests: 10,
-            failedTests: 2,
-            environment: 'staging',
-            machine: {
-              name: 'CI-RUNNER-LINUX-02',
-              os: 'Ubuntu Linux 22.04 LTS',
-              browser: 'Firefox',
-              version: '133.0',
-              environment: 'staging',
-              status: 'Online'
-            }
-          },
-          {
-            id: 'exec_04_' + projectId.slice(-4),
-            projectId,
-            suiteName: 'Cross-Browser UI Visual Check',
-            status: 'Passed',
-            startedAt: new Date(Date.now() - 1000 * 60 * 60 * 36).toISOString(),
-            durationSeconds: 76,
-            totalTests: 15,
-            passedTests: 15,
-            failedTests: 0,
-            environment: 'staging',
-            machine: {
-              name: 'MAC-MINI-M2',
-              os: 'macOS Sonoma 14.5',
-              browser: 'WebKit',
-              version: '18.2',
-              environment: 'staging',
-              status: 'Idle'
-            }
-          }
-        ],
+        totalSuites: 0,
+        suiteExecutions,
+        passedExecutions,
+        failedExecutions,
+        passRate,
+        recentExecutions: executions,
         activeMachine: {
-          name: 'WORKSTATION-QA-01',
-          os: 'Windows 11 Pro 64-bit',
+          name: 'LOCAL-WORKSTATION',
+          os: typeof navigator !== 'undefined' && navigator.userAgent.includes('Windows') ? 'Windows 11 Pro 64-bit' : 'Desktop OS',
           browser: 'Chromium',
-          version: '131.0.6778.86',
-          environment: 'staging',
+          version: 'Playwright Ready',
+          environment: 'development',
           status: 'Ready'
         }
       };

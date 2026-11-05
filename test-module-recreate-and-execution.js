@@ -11,10 +11,12 @@ async function runTests() {
   const db = new JsonDatabase(testDbPath);
   const projectId = 'proj_ecommerce_01';
 
-  // 1. Check initial seeded modules
+  // 1. Create initial test modules
+  db.createScriptModule(projectId, 'Initial Module 1', null);
+  db.createScriptModule(projectId, 'Initial Module 2', null);
   const initialModules = db.getScriptModules(projectId);
   console.log(`Initial modules count: ${initialModules.length}`);
-  assert(initialModules.length > 0, 'Initial modules should be seeded once');
+  assert(initialModules.length === 2, 'Initial modules should be 2');
 
   // 2. Delete all modules
   console.log('Deleting all modules for project...');
@@ -54,12 +56,32 @@ async function runTests() {
   const script = reloadedDb.createScript(projectId, subMod.id, 'Verify Storefront Elements', 'test@user.dev', 'Smoke test');
   console.log(`Created script: ${script.id}`);
 
-  // Step 1: Open browser / Navigate
+  // Step 1: Open browser (only opens browser)
   reloadedDb.addScriptStep(script.id, projectId, {
     nlpId: 'open_browser',
     nlpName: 'Open Browser',
     nlpCategory: 'Browser',
-    description: 'Launch browser and open demo storefront page',
+    description: 'Launch configured browser',
+    parameters: { browser: 'Chromium' },
+    isEnabled: true
+  });
+
+  // Step 2: Maximize browser
+  reloadedDb.addScriptStep(script.id, projectId, {
+    nlpId: 'maximize_browser',
+    nlpName: 'Maximize Browser',
+    nlpCategory: 'Browser',
+    description: 'Maximize browser window',
+    parameters: {},
+    isEnabled: true
+  });
+
+  // Step 3: Navigate to URL (navigates to URL)
+  reloadedDb.addScriptStep(script.id, projectId, {
+    nlpId: 'navigate_to_url',
+    nlpName: 'Navigate To URL',
+    nlpCategory: 'Browser',
+    description: 'Navigate to demo storefront page',
     parameters: { url: 'data:text/html,<html><head><title>Test Storefront</title></head><body><h1>Welcome to Easy Automate Storefront</h1><input id="email" placeholder="Enter email"/><button id="submitBtn">Submit</button></body></html>' },
     isEnabled: true
   });
@@ -144,3 +166,4 @@ runTests().catch(err => {
   console.error('Test failed with error:', err);
   process.exit(1);
 });
+

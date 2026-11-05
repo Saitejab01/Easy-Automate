@@ -702,19 +702,46 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
                     <span className="truncate">{rootMod.name}</span>
                   </div>
 
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setModuleToRename(rootMod);
+                        setRenameModuleName(rootMod.name);
+                      }}
+                      className="p-1 text-slate-400 hover:text-amber-300 hover:bg-slate-700/50 rounded transition-colors"
+                      title="Edit Module Name"
+                    >
+                      <Edit2 className="w-3 h-3" />
+                    </button>
                     <button
                       type="button"
                       onClick={(e) => handleOpenCreateModule(rootMod.id, e)}
-                      className="p-1 text-slate-400 hover:text-brand-300 rounded"
-                      title="Add Submodule"
+                      className="p-1 text-slate-400 hover:text-brand-300 hover:bg-slate-700/50 rounded transition-colors"
+                      title="Add Subfolder"
+                    >
+                      <FolderPlus className="w-3 h-3" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedModuleId(rootMod.id);
+                        setScriptNameInput('');
+                        setScriptDescInput('');
+                        setScriptModalError(null);
+                        setIsScriptModalOpen(true);
+                      }}
+                      className="p-1 text-slate-400 hover:text-emerald-400 hover:bg-slate-700/50 rounded transition-colors"
+                      title="Add Script"
                     >
                       <Plus className="w-3 h-3" />
                     </button>
                     <button
                       type="button"
                       onClick={(e) => handleDeleteModule(rootMod, e)}
-                      className="p-1 text-slate-400 hover:text-rose-400 rounded"
+                      className="p-1 text-slate-400 hover:text-rose-400 hover:bg-slate-700/50 rounded transition-colors"
                       title="Delete Module"
                     >
                       <Trash2 className="w-3 h-3" />
@@ -743,9 +770,48 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
                               <Folder className="w-3 h-3 text-brand-400 shrink-0" />
                               <span className="truncate">{subMod.name}</span>
                             </div>
-                            <span className="text-[10px] text-slate-500 font-mono">
-                              {subScripts.length}
-                            </span>
+                            <div className="flex items-center gap-1">
+                              <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setModuleToRename(subMod);
+                                    setRenameModuleName(subMod.name);
+                                  }}
+                                  className="p-0.5 text-slate-400 hover:text-amber-300 hover:bg-slate-700/50 rounded transition-colors"
+                                  title="Edit Submodule Name"
+                                >
+                                  <Edit2 className="w-2.5 h-2.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedModuleId(subMod.id);
+                                    setScriptNameInput('');
+                                    setScriptDescInput('');
+                                    setScriptModalError(null);
+                                    setIsScriptModalOpen(true);
+                                  }}
+                                  className="p-0.5 text-slate-400 hover:text-emerald-400 hover:bg-slate-700/50 rounded transition-colors"
+                                  title="Add Script"
+                                >
+                                  <Plus className="w-2.5 h-2.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => handleDeleteModule(subMod, e)}
+                                  className="p-0.5 text-slate-400 hover:text-rose-400 hover:bg-slate-700/50 rounded transition-colors"
+                                  title="Delete Submodule"
+                                >
+                                  <Trash2 className="w-2.5 h-2.5" />
+                                </button>
+                              </div>
+                              <span className="text-[10px] text-slate-500 font-mono">
+                                {subScripts.length}
+                              </span>
+                            </div>
                           </div>
 
                           {/* Scripts under Submodule */}
@@ -1873,6 +1939,44 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
                 className="px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 text-white text-xs font-semibold"
               >
                 Create
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* 9.1 Rename Module Modal */}
+      {moduleToRename && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-fadeIn">
+          <form onSubmit={handleRenameModule} className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl p-6 space-y-4">
+            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+              <Edit2 className="w-4 h-4 text-amber-400" />
+              Edit Module Name
+            </h3>
+            <div>
+              <label className="block text-xs text-slate-300 mb-1 font-semibold">Module Name</label>
+              <input
+                type="text"
+                placeholder="Enter module name"
+                value={renameModuleName}
+                onChange={(e) => setRenameModuleName(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:border-brand-500"
+                autoFocus
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setModuleToRename(null)}
+                className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-semibold"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 text-white text-xs font-semibold"
+              >
+                Save
               </button>
             </div>
           </form>
