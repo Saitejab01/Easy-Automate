@@ -361,10 +361,10 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
     if (!activeScript) return;
     setIsNlpPickerOpen(false);
 
-    // Initial parameters with defaults
+    // Initial parameters with defaults or empty strings for required parameters
     const params: Record<string, any> = {};
     nlp.requiredParams.forEach(p => {
-      if (p.defaultValue !== undefined) params[p.name] = p.defaultValue;
+      params[p.name] = p.defaultValue !== undefined ? p.defaultValue : '';
     });
     nlp.optionalParams?.forEach(p => {
       if (p.defaultValue !== undefined) params[p.name] = p.defaultValue;
@@ -389,16 +389,18 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
         setActiveScript(res.script);
         setScripts(prev => prev.map(s => (s.id === res.script.id ? res.script : s)));
 
+        // Find the newly inserted step
+        const newStepIndex = insertAfterStepNum !== undefined ? insertAfterStepNum : res.script.steps.length - 1;
+        const targetStep = res.script.steps[newStepIndex];
+
         // If NLP requires an element (Section 5), immediately prompt element selector
-        if (nlp.requiresElement) {
-          // Find the newly inserted step
-          const newStepIndex = insertAfterStepNum !== undefined ? insertAfterStepNum : res.script.steps.length - 1;
-          const targetStep = res.script.steps[newStepIndex];
-          if (targetStep) {
-            setElementPickerStepId(targetStep.id);
-            setElementSearchQuery('');
-            setIsElementPickerOpen(true);
-          }
+        if (nlp.requiresElement && targetStep) {
+          setElementPickerStepId(targetStep.id);
+          setElementSearchQuery('');
+          setIsElementPickerOpen(true);
+        } else if (!nlp.requiresElement && nlp.requiredParams.length > 0 && targetStep) {
+          // If NLP requires parameters like URL, prompt configuration immediately!
+          setEditingStep(targetStep);
         }
         showSuccessBanner(`Added step "${nlp.name}".`);
       }
@@ -453,6 +455,37 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
       }
     } catch (err: any) {
       console.error('Failed to move step:', err);
+    }
+  };
+
+  const handleInlineUrlChange = (stepId: string, url: string) => {
+    setActiveScript(prev => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        steps: prev.steps.map(s => {
+          if (s.id === stepId) {
+            return {
+              ...s,
+              parameters: { ...(s.parameters || {}), url }
+            };
+          }
+          return s;
+        })
+      };
+    });
+  };
+
+  const handleSaveInlineUrl = async (stepId: string) => {
+    if (!activeScript) return;
+    const targetStep = activeScript.steps.find(s => s.id === stepId);
+    if (!targetStep) return;
+    try {
+      await api.scripts.updateStep(activeScript.id, project.id, stepId, {
+        parameters: targetStep.parameters
+      });
+    } catch (err: any) {
+      console.warn('Failed to auto-save URL parameter:', err);
     }
   };
 
@@ -1193,10 +1226,33 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
                             )
                           )}
 
+                          {/* Inline URL Input for Navigate To URL */}
+                          {step.nlpId === 'navigate_to_url' && (
+                            <div className="flex items-center gap-2 pt-1.5 max-w-xl">
+                              <span className="text-[11px] font-semibold text-slate-400 shrink-0">Target URL:</span>
+                              <div className="relative flex-1">
+                                <input
+                                  type="text"
+                                  placeholder="e.g. https://example.com or $baseURL"
+                                  value={step.parameters?.url || ''}
+                                  onChange={(e) => handleInlineUrlChange(step.id, e.target.value)}
+                                  onBlur={() => handleSaveInlineUrl(step.id)}
+                                  className="w-full px-2.5 py-1 text-xs bg-slate-950 border border-slate-700/80 rounded-lg text-emerald-400 placeholder:text-slate-600 focus:outline-none focus:border-brand-500 font-mono"
+                                />
+                              </div>
+                              {!step.parameters?.url && (
+                                <span className="text-[10px] text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 whitespace-nowrap">
+                                  URL Required
+                                </span>
+                              )}
+                            </div>
+                          )}
+
                           {/* Parameter Chips */}
                           {step.parameters && Object.keys(step.parameters).length > 0 && (
                             <div className="flex flex-wrap gap-1.5 pt-1">
                               {Object.entries(step.parameters).map(([k, v]) => {
+                                if (step.nlpId === 'navigate_to_url' && k === 'url') return null;
                                 if (v === undefined || v === '') return null;
                                 const isVariable = typeof v === 'string' && v.startsWith('$');
 
@@ -1828,76 +1884,175 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
               </button>
             </div>
 
-            <div className="p-6 space-y-4 text-xs">
-              {/* Parameter Inputs with Variable Suggestions (Section 7.4) */}
-              {Object.entries(editingStep.parameters || {}).map(([paramKey, paramVal]) => (
-                <div key={paramKey} className="relative">
-                  <label className="block text-slate-300 font-semibold mb-1 capitalize">
-                    {paramKey}
-                  </label>
-                  <input
-                    type="text"
-                    value={String(paramVal)}
-                    onChange={(e) =>
-                      handleInputChange(paramKey, e.target.value, (newV) => {
-                        setEditingStep(prev => prev ? {
-                          ...prev,
-                          parameters: { ...prev.parameters, [paramKey]: newV }
-                        } : null);
-                      })
-                    }
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:border-brand-500 font-mono"
-                  />
+            {(() => {
+              const nlpDef = NLP_CATALOG.find(n => n.id === editingStep.nlpId);
+              const allParamsToEdit: Array<{
+                name: string;
+                label: string;
+                type: string;
+                required: boolean;
+                placeholder?: string;
+                description?: string;
+                options?: string[];
+                currentValue: any;
+              }> = [];
 
-                  {/* Variable Suggestions Autocomplete Dropdown (Section 7.4) */}
-                  {activeInputRef?.fieldName === paramKey && varSuggestions.length > 0 && (
-                    <div className="absolute left-0 right-0 top-full mt-1 bg-slate-900 border border-brand-500/50 rounded-xl shadow-2xl p-1 z-30 max-h-40 overflow-y-auto">
-                      <span className="text-[10px] text-slate-500 font-semibold px-2 py-1 block uppercase">
-                        Matching Variables
-                      </span>
-                      {varSuggestions.map(sv => (
-                        <button
-                          key={sv.id}
-                          type="button"
-                          onClick={() => handleSelectVarSuggestion(sv.name, (newV) => {
-                            setEditingStep(prev => prev ? {
-                              ...prev,
-                              parameters: { ...prev.parameters, [paramKey]: newV }
-                            } : null);
-                          })}
-                          className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-800 text-xs text-slate-200 flex items-center justify-between"
-                        >
-                          <span className="font-mono text-brand-300 font-bold">${sv.name}</span>
-                          <span className="text-[10px] text-slate-500">{sv.type} ({sv.dataType})</span>
-                        </button>
-                      ))}
+              const seenKeys = new Set<string>();
+
+              if (nlpDef?.requiredParams) {
+                nlpDef.requiredParams.forEach(p => {
+                  seenKeys.add(p.name);
+                  allParamsToEdit.push({
+                    name: p.name,
+                    label: p.label || p.name,
+                    type: p.type || 'string',
+                    required: true,
+                    placeholder: p.placeholder || (p.name === 'url' ? 'https://example.com or $baseURL' : `Enter ${p.label || p.name}`),
+                    description: p.description,
+                    options: p.options,
+                    currentValue: editingStep.parameters?.[p.name] ?? p.defaultValue ?? ''
+                  });
+                });
+              }
+
+              if (nlpDef?.optionalParams) {
+                nlpDef.optionalParams.forEach(p => {
+                  seenKeys.add(p.name);
+                  allParamsToEdit.push({
+                    name: p.name,
+                    label: p.label || p.name,
+                    type: p.type || 'string',
+                    required: false,
+                    placeholder: p.placeholder || `Enter ${p.label || p.name}`,
+                    description: p.description,
+                    options: p.options,
+                    currentValue: editingStep.parameters?.[p.name] ?? p.defaultValue ?? ''
+                  });
+                });
+              }
+
+              // Any other keys already present in editingStep.parameters
+              Object.entries(editingStep.parameters || {}).forEach(([k, v]) => {
+                if (!seenKeys.has(k)) {
+                  allParamsToEdit.push({
+                    name: k,
+                    label: k,
+                    type: typeof v === 'number' ? 'number' : 'string',
+                    required: false,
+                    placeholder: `Enter ${k}`,
+                    currentValue: v ?? ''
+                  });
+                }
+              });
+
+              return (
+                <div className="p-6 space-y-4 text-xs">
+                  {allParamsToEdit.length === 0 ? (
+                    <div className="py-6 text-center text-slate-400">
+                      <p>This action does not require any additional parameters.</p>
                     </div>
-                  )}
-                </div>
-              ))}
+                  ) : (
+                    allParamsToEdit.map(param => (
+                      <div key={param.name} className="relative">
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-slate-300 font-semibold flex items-center gap-1">
+                            <span>{param.label}</span>
+                            {param.required && <span className="text-rose-400 font-bold" title="Required">*</span>}
+                          </label>
+                          <span className="text-[10px] text-slate-500 font-mono">
+                            {param.name}
+                          </span>
+                        </div>
+                        {param.description && (
+                          <p className="text-[11px] text-slate-400 mb-1.5">{param.description}</p>
+                        )}
 
-              <div className="pt-2">
-                <button
-                  type="button"
-                  onClick={async () => {
-                    if (!activeScript) return;
-                    await api.scripts.updateStep(activeScript.id, project.id, editingStep.id, {
-                      parameters: editingStep.parameters
-                    });
-                    await loadAllData();
-                    setActiveScript(prev => prev ? {
-                      ...prev,
-                      steps: prev.steps.map(s => s.id === editingStep.id ? editingStep : s)
-                    } : null);
-                    setEditingStep(null);
-                    showSuccessBanner('Step parameters updated.');
-                  }}
-                  className="w-full py-2 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-semibold text-xs transition-all"
-                >
-                  Save Parameters
-                </button>
-              </div>
-            </div>
+                        {param.type === 'dropdown' && param.options && param.options.length > 0 ? (
+                          <select
+                            value={String(editingStep.parameters?.[param.name] ?? param.currentValue)}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setEditingStep(prev => prev ? {
+                                ...prev,
+                                parameters: { ...prev.parameters, [param.name]: val }
+                              } : null);
+                            }}
+                            className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:border-brand-500 font-mono"
+                          >
+                            {param.options.map(opt => (
+                              <option key={opt} value={opt}>{opt}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <input
+                            type={param.type === 'number' ? 'number' : 'text'}
+                            placeholder={param.placeholder}
+                            value={String(editingStep.parameters?.[param.name] ?? param.currentValue)}
+                            onChange={(e) =>
+                              handleInputChange(param.name, e.target.value, (newV) => {
+                                setEditingStep(prev => prev ? {
+                                  ...prev,
+                                  parameters: { ...prev.parameters, [param.name]: newV }
+                                } : null);
+                              })
+                            }
+                            className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:border-brand-500 font-mono"
+                            autoFocus={param.required && !editingStep.parameters?.[param.name]}
+                          />
+                        )}
+
+                        {/* Variable Suggestions Autocomplete Dropdown (Section 7.4) */}
+                        {activeInputRef?.fieldName === param.name && varSuggestions.length > 0 && (
+                          <div className="absolute left-0 right-0 top-full mt-1 bg-slate-900 border border-brand-500/50 rounded-xl shadow-2xl p-1 z-30 max-h-40 overflow-y-auto">
+                            <span className="text-[10px] text-slate-500 font-semibold px-2 py-1 block uppercase">
+                              Matching Variables
+                            </span>
+                            {varSuggestions.map(sv => (
+                              <button
+                                key={sv.id}
+                                type="button"
+                                onClick={() => handleSelectVarSuggestion(sv.name, (newV) => {
+                                  setEditingStep(prev => prev ? {
+                                    ...prev,
+                                    parameters: { ...prev.parameters, [param.name]: newV }
+                                  } : null);
+                                })}
+                                className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-800 text-xs text-slate-200 flex items-center justify-between"
+                              >
+                                <span className="font-mono text-brand-300 font-bold">${sv.name}</span>
+                                <span className="text-[10px] text-slate-500">{sv.type} ({sv.dataType})</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))
+                  )}
+
+                  <div className="pt-2">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (!activeScript) return;
+                        await api.scripts.updateStep(activeScript.id, project.id, editingStep.id, {
+                          parameters: editingStep.parameters
+                        });
+                        await loadAllData();
+                        setActiveScript(prev => prev ? {
+                          ...prev,
+                          steps: prev.steps.map(s => s.id === editingStep.id ? editingStep : s)
+                        } : null);
+                        setEditingStep(null);
+                        showSuccessBanner('Step parameters updated.');
+                      }}
+                      className="w-full py-2.5 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-semibold text-xs transition-all shadow-lg shadow-brand-500/20"
+                    >
+                      Save Parameters
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}
