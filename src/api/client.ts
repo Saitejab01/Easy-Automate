@@ -1196,6 +1196,134 @@ export const api = {
     }
   },
 
+  // ================= Stage 4: TestDev Scripts ================= //
+  scripts: {
+    async getModules(projectId: string) {
+      if (isElectron) return (window as any).electronAPI.scripts.getModules(projectId);
+      return { success: true, modules: [] };
+    },
+    async createModule(projectId: string, name: string, parentId?: string | null) {
+      if (isElectron) return (window as any).electronAPI.scripts.createModule(projectId, name, parentId);
+      return { success: false, error: 'Electron mode required' };
+    },
+    async updateModule(moduleId: string, projectId: string, name: string) {
+      if (isElectron) return (window as any).electronAPI.scripts.updateModule(moduleId, projectId, name);
+      return { success: false, error: 'Electron mode required' };
+    },
+    async deleteModule(moduleId: string, projectId: string) {
+      if (isElectron) return (window as any).electronAPI.scripts.deleteModule(moduleId, projectId);
+      return { success: false, error: 'Electron mode required' };
+    },
+
+    async getScripts(projectId: string, moduleId?: string) {
+      if (isElectron) return (window as any).electronAPI.scripts.getScripts(projectId, moduleId);
+      return { success: true, scripts: [] };
+    },
+    async getScriptById(scriptId: string, projectId: string) {
+      if (isElectron) return (window as any).electronAPI.scripts.getScriptById(scriptId, projectId);
+      return { success: false, error: 'Electron mode required' };
+    },
+    async createScript(projectId: string, moduleId: string, name: string, createdBy: string, description?: string) {
+      if (isElectron) return (window as any).electronAPI.scripts.createScript(projectId, moduleId, name, createdBy, description);
+      return { success: false, error: 'Electron mode required' };
+    },
+    async updateScript(scriptId: string, projectId: string, updates: any) {
+      if (isElectron) return (window as any).electronAPI.scripts.updateScript(scriptId, projectId, updates);
+      return { success: false, error: 'Electron mode required' };
+    },
+    async deleteScript(scriptId: string, projectId: string) {
+      if (isElectron) return (window as any).electronAPI.scripts.deleteScript(scriptId, projectId);
+      return { success: false, error: 'Electron mode required' };
+    },
+
+    async addStep(scriptId: string, projectId: string, step: any, insertAfterStepNumber?: number) {
+      if (isElectron) return (window as any).electronAPI.scripts.addStep(scriptId, projectId, step, insertAfterStepNumber);
+      return { success: false, error: 'Electron mode required' };
+    },
+    async updateStep(scriptId: string, projectId: string, stepId: string, updates: any) {
+      if (isElectron) return (window as any).electronAPI.scripts.updateStep(scriptId, projectId, stepId, updates);
+      return { success: false, error: 'Electron mode required' };
+    },
+    async deleteStep(scriptId: string, projectId: string, stepId: string) {
+      if (isElectron) return (window as any).electronAPI.scripts.deleteStep(scriptId, projectId, stepId);
+      return { success: false, error: 'Electron mode required' };
+    },
+    async duplicateStep(scriptId: string, projectId: string, stepId: string) {
+      if (isElectron) return (window as any).electronAPI.scripts.duplicateStep(scriptId, projectId, stepId);
+      return { success: false, error: 'Electron mode required' };
+    },
+    async reorderSteps(scriptId: string, projectId: string, stepIds: string[]) {
+      if (isElectron) return (window as any).electronAPI.scripts.reorderSteps(scriptId, projectId, stepIds);
+      return { success: false, error: 'Electron mode required' };
+    },
+
+    async getVariables(projectId: string, scriptId?: string | null) {
+      if (isElectron) return (window as any).electronAPI.scripts.getVariables(projectId, scriptId);
+      return { success: true, variables: [] };
+    },
+    async createVariable(projectId: string, data: any) {
+      if (isElectron) return (window as any).electronAPI.scripts.createVariable(projectId, data);
+      return { success: false, error: 'Electron mode required' };
+    },
+    async updateVariable(variableId: string, projectId: string, updates: any) {
+      if (isElectron) return (window as any).electronAPI.scripts.updateVariable(variableId, projectId, updates);
+      return { success: false, error: 'Electron mode required' };
+    },
+    async deleteVariable(variableId: string, projectId: string) {
+      if (isElectron) return (window as any).electronAPI.scripts.deleteVariable(variableId, projectId);
+      return { success: false, error: 'Electron mode required' };
+    },
+
+    async getRunSettings(projectId: string) {
+      if (isElectron) return (window as any).electronAPI.scripts.getRunSettings(projectId);
+      return {
+        success: true,
+        settings: {
+          browser: 'chromium',
+          delayBetweenStepsMs: 500,
+          globalWaitTimeMs: 3000,
+          executionTimeoutSec: 30,
+          screenshotOption: 'failed-only',
+          screenRecording: false,
+          isDefault: true,
+          scope: 'project'
+        }
+      };
+    },
+    async saveRunSettings(projectId: string, settings: any) {
+      if (isElectron) return (window as any).electronAPI.scripts.saveRunSettings(projectId, settings);
+      return { success: true, settings };
+    }
+  },
+
+  // ================= Stage 5: Execution ================= //
+  execution: {
+    async getExecutions(projectId: string) {
+      if (isElectron) return (window as any).electronAPI.execution.getExecutions(projectId);
+      return { success: true, executions: [] };
+    },
+    async getExecutionById(executionId: string, projectId: string) {
+      if (isElectron) return (window as any).electronAPI.execution.getExecutionById(executionId, projectId);
+      return { success: false, error: 'Electron mode required' };
+    },
+    async executeScript(projectId: string, scriptId: string, customSettings?: any) {
+      if (isElectron) return (window as any).electronAPI.execution.executeScript(projectId, scriptId, customSettings);
+      return { success: false, error: 'Electron mode required' };
+    }
+  },
+
+  // ================= Excel Utilities ================= //
+  excel: {
+    async getData(projectId: string, fileName: string, sheetName: string, uniqueData: string) {
+      if (isElectron) return (window as any).electronAPI.excel.getData(projectId, fileName, sheetName, uniqueData);
+      return { success: false, error: 'Electron mode required' };
+    },
+    async writeData(projectId: string, fileName: string, sheetName: string, uniqueData: string, header: string, writeBackData: string) {
+      if (isElectron) return (window as any).electronAPI.excel.writeData(projectId, fileName, sheetName, uniqueData, header, writeBackData);
+      return { success: false, error: 'Electron mode required' };
+    }
+  },
+
   window: {
     minimize: () => isElectron && (window as any).electronAPI.window.minimize(),
     maximize: () => isElectron && (window as any).electronAPI.window.maximize(),

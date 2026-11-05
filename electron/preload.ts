@@ -56,6 +56,64 @@ export const electronAPI = {
     deleteFile: (fileId: string, projectId: string) =>
       ipcRenderer.invoke('testData:deleteFile', { fileId, projectId }),
   },
+  scripts: {
+    getModules: (projectId: string) => ipcRenderer.invoke('scripts:getModules', projectId),
+    createModule: (projectId: string, name: string, parentId?: string | null) =>
+      ipcRenderer.invoke('scripts:createModule', { projectId, name, parentId }),
+    updateModule: (moduleId: string, projectId: string, name: string) =>
+      ipcRenderer.invoke('scripts:updateModule', { moduleId, projectId, name }),
+    deleteModule: (moduleId: string, projectId: string) =>
+      ipcRenderer.invoke('scripts:deleteModule', { moduleId, projectId }),
+
+    getScripts: (projectId: string, moduleId?: string) =>
+      ipcRenderer.invoke('scripts:getScripts', { projectId, moduleId }),
+    getScriptById: (scriptId: string, projectId: string) =>
+      ipcRenderer.invoke('scripts:getScriptById', { scriptId, projectId }),
+    createScript: (projectId: string, moduleId: string, name: string, createdBy: string, description?: string) =>
+      ipcRenderer.invoke('scripts:createScript', { projectId, moduleId, name, createdBy, description }),
+    updateScript: (scriptId: string, projectId: string, updates: any) =>
+      ipcRenderer.invoke('scripts:updateScript', { scriptId, projectId, updates }),
+    deleteScript: (scriptId: string, projectId: string) =>
+      ipcRenderer.invoke('scripts:deleteScript', { scriptId, projectId }),
+
+    addStep: (scriptId: string, projectId: string, step: any, insertAfterStepNumber?: number) =>
+      ipcRenderer.invoke('scripts:addStep', { scriptId, projectId, step, insertAfterStepNumber }),
+    updateStep: (scriptId: string, projectId: string, stepId: string, updates: any) =>
+      ipcRenderer.invoke('scripts:updateStep', { scriptId, projectId, stepId, updates }),
+    deleteStep: (scriptId: string, projectId: string, stepId: string) =>
+      ipcRenderer.invoke('scripts:deleteStep', { scriptId, projectId, stepId }),
+    duplicateStep: (scriptId: string, projectId: string, stepId: string) =>
+      ipcRenderer.invoke('scripts:duplicateStep', { scriptId, projectId, stepId }),
+    reorderSteps: (scriptId: string, projectId: string, stepIds: string[]) =>
+      ipcRenderer.invoke('scripts:reorderSteps', { scriptId, projectId, stepIds }),
+
+    getVariables: (projectId: string, scriptId?: string | null) =>
+      ipcRenderer.invoke('scripts:getVariables', { projectId, scriptId }),
+    createVariable: (projectId: string, data: any) =>
+      ipcRenderer.invoke('scripts:createVariable', { projectId, data }),
+    updateVariable: (variableId: string, projectId: string, updates: any) =>
+      ipcRenderer.invoke('scripts:updateVariable', { variableId, projectId, updates }),
+    deleteVariable: (variableId: string, projectId: string) =>
+      ipcRenderer.invoke('scripts:deleteVariable', { variableId, projectId }),
+
+    getRunSettings: (projectId: string) =>
+      ipcRenderer.invoke('scripts:getRunSettings', projectId),
+    saveRunSettings: (projectId: string, settings: any) =>
+      ipcRenderer.invoke('scripts:saveRunSettings', { projectId, settings }),
+  },
+  execution: {
+    getExecutions: (projectId: string) => ipcRenderer.invoke('execution:getExecutions', projectId),
+    getExecutionById: (executionId: string, projectId: string) =>
+      ipcRenderer.invoke('execution:getExecutionById', { executionId, projectId }),
+    executeScript: (projectId: string, scriptId: string, customSettings?: any) =>
+      ipcRenderer.invoke('execution:executeScript', { projectId, scriptId, customSettings }),
+  },
+  excel: {
+    getData: (projectId: string, fileName: string, sheetName: string, uniqueData: string) =>
+      ipcRenderer.invoke('excel:getData', { projectId, fileName, sheetName, uniqueData }),
+    writeData: (projectId: string, fileName: string, sheetName: string, uniqueData: string, header: string, writeBackData: string) =>
+      ipcRenderer.invoke('excel:writeData', { projectId, fileName, sheetName, uniqueData, header, writeBackData }),
+  },
   dashboard: {
     getStats: (projectId: string) => ipcRenderer.invoke('dashboard:getStats', projectId),
   },

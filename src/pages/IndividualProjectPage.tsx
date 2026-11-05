@@ -28,6 +28,8 @@ import { useAuth } from '../context/AuthContext';
 import { DashboardView } from '../components/project/DashboardView';
 import { RepositoryView } from '../components/project/RepositoryView';
 import { TestDataView } from '../components/project/TestDataView';
+import { ScriptsView } from '../components/project/ScriptsView';
+import { ExecutionView } from '../components/project/ExecutionView';
 import { PlaceholderView } from '../components/project/PlaceholderView';
 
 type WorkspaceSection = 'dashboard' | 'repository' | 'test-data' | 'scripts' | 'execution' | 'suites' | 'settings';
@@ -41,6 +43,7 @@ export const IndividualProjectPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [activeSection, setActiveSection] = useState<WorkspaceSection>('dashboard');
   const [isTestDevOpen, setIsTestDevOpen] = useState(true);
+  const [selectedExecutionId, setSelectedExecutionId] = useState<string | null>(null);
 
   // Quick Settings state
   const [editName, setEditName] = useState('');
@@ -230,12 +233,12 @@ export const IndividualProjectPage: React.FC = () => {
 
               {isTestDevOpen && (
                 <div className="pl-3 space-y-1 mt-1 border-l border-slate-800/80 ml-4">
-                  {/* TestDev - Scripts (Placeholder) */}
+                  {/* TestDev - Scripts */}
                   <button
                     onClick={() => setActiveSection('scripts')}
                     className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-all ${
                       activeSection === 'scripts'
-                        ? 'bg-slate-800 text-brand-300 font-semibold'
+                        ? 'bg-brand-600 text-white font-semibold shadow-md shadow-brand-600/30'
                         : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
                     }`}
                   >
@@ -243,15 +246,14 @@ export const IndividualProjectPage: React.FC = () => {
                       <FileCode className="w-3.5 h-3.5 text-brand-400" />
                       <span>Scripts</span>
                     </div>
-                    <span className="text-[9px] text-slate-500 font-mono">Stage 4</span>
                   </button>
 
-                  {/* TestDev - Execution (Placeholder) */}
+                  {/* TestDev - Execution */}
                   <button
                     onClick={() => setActiveSection('execution')}
                     className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-all ${
                       activeSection === 'execution'
-                        ? 'bg-slate-800 text-brand-300 font-semibold'
+                        ? 'bg-brand-600 text-white font-semibold shadow-md shadow-brand-600/30'
                         : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
                     }`}
                   >
@@ -259,7 +261,6 @@ export const IndividualProjectPage: React.FC = () => {
                       <PlayCircle className="w-3.5 h-3.5 text-amber-400" />
                       <span>Execution</span>
                     </div>
-                    <span className="text-[9px] text-slate-500 font-mono">Stage 4</span>
                   </button>
                 </div>
               )}
@@ -278,8 +279,8 @@ export const IndividualProjectPage: React.FC = () => {
                 <Layers className="w-4 h-4 text-purple-400" />
                 <span>Suites</span>
               </div>
-              <span className="text-[9px] bg-slate-900 text-slate-400 border border-slate-800 px-1.5 py-0.2 rounded font-mono">
-                Stage 5
+              <span className="text-[9px] bg-slate-900 text-slate-500 border border-slate-800 px-1.5 py-0.2 rounded font-mono">
+                Stage 6
               </span>
             </button>
           </nav>
@@ -318,11 +319,20 @@ export const IndividualProjectPage: React.FC = () => {
         {activeSection === 'test-data' && <TestDataView project={project} />}
 
         {activeSection === 'scripts' && (
-          <PlaceholderView section="scripts" projectName={project.name} />
+          <ScriptsView
+            project={project}
+            onNavigateToExecution={(execId) => {
+              if (execId) setSelectedExecutionId(execId);
+              setActiveSection('execution');
+            }}
+          />
         )}
 
         {activeSection === 'execution' && (
-          <PlaceholderView section="execution" projectName={project.name} />
+          <ExecutionView
+            project={project}
+            selectedExecutionId={selectedExecutionId}
+          />
         )}
 
         {activeSection === 'suites' && (

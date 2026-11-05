@@ -123,7 +123,7 @@ for (const data of testRows) {
     suites: {
       title: 'Test Suites Orchestration',
       subtitle: 'Organize, schedule, and execute grouped automation suites',
-      badge: 'Stage 5 Feature',
+      badge: 'Stage 6 Feature',
       icon: Layers,
       iconColor: 'text-purple-400',
       bgColor: 'bg-purple-500/10',

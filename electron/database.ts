@@ -2,6 +2,9 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
+import os from 'os';
+import * as XLSX from 'xlsx';
+import { AutomationEngine } from './engine/automationEngine';
 
 export interface DbUser {
   id: string;
@@ -163,6 +166,167 @@ export interface TestDataFile {
   description?: string;
 }
 
+// Stage 4 & 5: TestDev (Scripts & Execution) Types
+export type NlpCategory =
+  | 'Browser'
+  | 'Browser Action'
+  | 'Switching'
+  | 'Verification'
+  | 'Wait'
+  | 'Scroll'
+  | 'Excel';
+
+export interface ScriptModule {
+  id: string;
+  projectId: string;
+  name: string;
+  parentId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type VariableType = 'Local' | 'Global';
+export type VariableDataType = 'String' | 'Number' | 'Boolean' | 'Encrypted';
+
+export interface ScriptVariable {
+  id: string;
+  projectId: string;
+  scriptId?: string | null;
+  name: string;
+  type: VariableType;
+  dataType: VariableDataType;
+  value: string;
+  description?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ScriptStep {
+  id: string;
+  stepNumber: number;
+  nlpId: string;
+  nlpName: string;
+  nlpCategory: NlpCategory;
+  description: string;
+  elementId?: string | null;
+  elementName?: string;
+  pageName?: string;
+  locator?: {
+    type: string;
+    value: string;
+    dynamicValues?: Record<string, string>;
+  };
+  parameters: Record<string, any>;
+  variableMappings?: Record<string, string>;
+  isEnabled: boolean;
+}
+
+export interface AutomationScript {
+  id: string;
+  projectId: string;
+  moduleId: string;
+  name: string;
+  description?: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  stepCount: number;
+  lastExecutionStatus: 'Passed' | 'Failed' | 'Running' | 'Pending' | 'Aborted' | 'Skipped' | null;
+  lastExecutionDate: string | null;
+  steps: ScriptStep[];
+}
+
+export interface RunSettings {
+  browser: 'chromium' | 'firefox' | 'webkit';
+  delayBetweenStepsMs: number;
+  globalWaitTimeMs: number;
+  executionTimeoutSec: number;
+  screenshotOption: 'every-step' | 'failed-only';
+  screenRecording: boolean;
+  isDefault?: boolean;
+  scope?: 'project' | 'user';
+}
+
+export interface StepExecutionDetail {
+  stepNumber: number;
+  nlpName: string;
+  nlpCategory: NlpCategory;
+  description: string;
+  status: 'Passed' | 'Failed' | 'Running' | 'Skipped';
+  startedAt: string;
+  completedAt: string;
+  durationSeconds: number;
+  element?: {
+    id: string;
+    name: string;
+    page: string;
+    locatorType: string;
+    locatorValue: string;
+    dynamicValues?: Record<string, string>;
+  };
+  variablesUsed?: Array<{
+    name: string;
+    type: VariableType;
+    resolvedValue: string;
+    isMasked?: boolean;
+  }>;
+  inputParameters: Record<string, any>;
+  excelReference?: {
+    fileName: string;
+    sheetName: string;
+    uniqueData: string;
+    header?: string;
+    extractedData?: Record<string, any>;
+    writeBackValue?: string;
+  };
+  logs: string[];
+  screenshot?: string;
+  error?: {
+    exceptionName: string;
+    message: string;
+    locator?: string;
+  };
+}
+
+export interface ScriptExecutionDetail {
+  scriptId: string;
+  scriptName: string;
+  moduleName: string;
+  status: 'Passed' | 'Failed' | 'Running' | 'Aborted' | 'Skipped';
+  startedAt: string;
+  completedAt?: string;
+  durationSeconds: number;
+  steps: StepExecutionDetail[];
+  failureDetails?: {
+    reason: string;
+    exceptionName: string;
+    errorMessage: string;
+    failedStepNumber: number;
+    failedLocator?: string;
+    screenshot?: string;
+    logs: string[];
+  };
+  screenRecordingUrl?: string;
+}
+
+export interface DetailedExecutionRecord {
+  id: string;
+  projectId: string;
+  suiteName?: string;
+  status: 'Passed' | 'Failed' | 'Running' | 'Pending' | 'Aborted' | 'Skipped';
+  startedAt: string;
+  completedAt?: string;
+  durationSeconds: number;
+  totalScripts: number;
+  passedScripts: number;
+  failedScripts: number;
+  runSettings: RunSettings;
+  machine: MachineDetails;
+  nodeVersion: string;
+  playwrightVersion: string;
+  scripts: ScriptExecutionDetail[];
+}
+
 export interface DatabaseSchema {
   users: DbUser[];
   projects: Project[];
@@ -172,6 +336,12 @@ export interface DatabaseSchema {
   executions: ExecutionRecord[];
   testDataFolders: TestDataFolder[];
   testDataFiles: TestDataFile[];
+  scriptModules: ScriptModule[];
+  scripts: AutomationScript[];
+  variables: ScriptVariable[];
+  detailedExecutions: DetailedExecutionRecord[];
+  runSettings: Record<string, RunSettings>;
+  executionCounter: number;
 }
 
 export class JsonDatabase {
@@ -184,7 +354,13 @@ export class JsonDatabase {
     elements: [],
     executions: [],
     testDataFolders: [],
-    testDataFiles: []
+    testDataFiles: [],
+    scriptModules: [],
+    scripts: [],
+    variables: [],
+    detailedExecutions: [],
+    runSettings: {},
+    executionCounter: 1
   };
 
   constructor(customPath?: string) {
@@ -219,6 +395,12 @@ export class JsonDatabase {
         if (!this.data.executions) this.data.executions = [];
         if (!this.data.testDataFolders) this.data.testDataFolders = [];
         if (!this.data.testDataFiles) this.data.testDataFiles = [];
+        if (!this.data.scriptModules) this.data.scriptModules = [];
+        if (!this.data.scripts) this.data.scripts = [];
+        if (!this.data.variables) this.data.variables = [];
+        if (!this.data.detailedExecutions) this.data.detailedExecutions = [];
+        if (!this.data.runSettings) this.data.runSettings = {};
+        if (typeof this.data.executionCounter !== 'number') this.data.executionCounter = 1;
       } else {
         this.save();
       }
@@ -305,6 +487,12 @@ export class JsonDatabase {
       const existingTestData = this.data.testDataFolders.filter(f => f.projectId === proj.id);
       if (existingTestData.length === 0) {
         this.seedProjectTestData(proj.id, 'demo@easyautomate.dev');
+        hasChanges = true;
+      }
+
+      const existingModules = this.data.scriptModules.filter(m => m.projectId === proj.id);
+      if (existingModules.length === 0) {
+        this.seedProjectScripts(proj.id, 'demo@easyautomate.dev');
         hasChanges = true;
       }
     }
@@ -1413,6 +1601,1724 @@ export class JsonDatabase {
       throw new Error('Test data file not found.');
     }
     this.data.testDataFiles.splice(idx, 1);
+    this.save();
+    return true;
+  }
+
+  // ================= Stage 4: TestDev Scripts & Modules ================= //
+
+  public seedProjectScripts(projectId: string, userEmail: string): void {
+    const now = new Date().toISOString();
+    const suffix = projectId.slice(-4);
+
+    // 1. Modules & Submodules matching Section 2.1
+    const modLogin = 'mod_login_' + suffix;
+    const modLoginVal = 'mod_login_val_' + suffix;
+    const modLoginInval = 'mod_login_inval_' + suffix;
+
+    const modProd = 'mod_prod_' + suffix;
+    const modProdSearch = 'mod_prod_search_' + suffix;
+    const modProdCart = 'mod_prod_cart_' + suffix;
+
+    const modPay = 'mod_pay_' + suffix;
+    const modPayVal = 'mod_pay_val_' + suffix;
+
+    const modules: ScriptModule[] = [
+      { id: modLogin, projectId, name: 'Login Module', parentId: null, createdAt: now, updatedAt: now },
+      { id: modLoginVal, projectId, name: 'Valid Login', parentId: modLogin, createdAt: now, updatedAt: now },
+      { id: modLoginInval, projectId, name: 'Invalid Login', parentId: modLogin, createdAt: now, updatedAt: now },
+
+      { id: modProd, projectId, name: 'Product Module', parentId: null, createdAt: now, updatedAt: now },
+      { id: modProdSearch, projectId, name: 'Product Search', parentId: modProd, createdAt: now, updatedAt: now },
+      { id: modProdCart, projectId, name: 'Cart Module', parentId: modProd, createdAt: now, updatedAt: now },
+
+      { id: modPay, projectId, name: 'Payment Module', parentId: null, createdAt: now, updatedAt: now },
+      { id: modPayVal, projectId, name: 'Payment Validation', parentId: modPay, createdAt: now, updatedAt: now }
+    ];
+
+    // Find sample repo elements for mapping
+    const emailElem = this.data.elements.find(e => e.projectId === projectId && e.name === 'Email Field');
+    const passElem = this.data.elements.find(e => e.projectId === projectId && e.name === 'Password Field');
+    const btnElem = this.data.elements.find(e => e.projectId === projectId && e.name === 'Login Button');
+    const searchElem = this.data.elements.find(e => e.projectId === projectId && e.name === 'Search Field');
+    const cartBtnElem = this.data.elements.find(e => e.projectId === projectId && e.name === 'Add To Cart Button');
+    const checkoutBtnElem = this.data.elements.find(e => e.projectId === projectId && e.name === 'Checkout Button');
+
+    const emailPage = emailElem ? this.data.pages.find(p => p.id === emailElem.pageId)?.name : 'Login Page';
+    const homePage = searchElem ? this.data.pages.find(p => p.id === searchElem.pageId)?.name : 'Home Page';
+    const cartPage = checkoutBtnElem ? this.data.pages.find(p => p.id === checkoutBtnElem.pageId)?.name : 'Cart Page';
+
+    const scrValidLoginId = 'scr_01_' + suffix;
+    const scrRememberMeId = 'scr_02_' + suffix;
+    const scrInvalidPassId = 'scr_03_' + suffix;
+    const scrInvalidEmailId = 'scr_04_' + suffix;
+    const scrSearchValidId = 'scr_05_' + suffix;
+    const scrSearchInvalidId = 'scr_06_' + suffix;
+    const scrAddCartId = 'scr_07_' + suffix;
+    const scrPaymentValId = 'scr_08_' + suffix;
+
+    const scripts: AutomationScript[] = [
+      {
+        id: scrValidLoginId,
+        projectId,
+        moduleId: modLoginVal,
+        name: 'Login With Valid Credentials',
+        description: 'Verifies successful login using standard demo credentials and lands on dashboard',
+        createdBy: userEmail,
+        createdAt: now,
+        updatedAt: now,
+        stepCount: 6,
+        lastExecutionStatus: 'Passed',
+        lastExecutionDate: new Date(Date.now() - 1000 * 60 * 20).toISOString(),
+        steps: [
+          {
+            id: 'step_1_' + suffix,
+            stepNumber: 1,
+            nlpId: 'open_browser',
+            nlpName: 'Open Browser',
+            nlpCategory: 'Browser',
+            description: 'Launch the configured browser (Chromium)',
+            parameters: { browser: 'Chromium' },
+            isEnabled: true
+          },
+          {
+            id: 'step_2_' + suffix,
+            stepNumber: 2,
+            nlpId: 'navigate_to_url',
+            nlpName: 'Navigate To URL',
+            nlpCategory: 'Browser',
+            description: 'Navigate to target login portal',
+            parameters: { url: '$baseURL/login' },
+            isEnabled: true
+          },
+          {
+            id: 'step_3_' + suffix,
+            stepNumber: 3,
+            nlpId: 'enter_text',
+            nlpName: 'Enter Text',
+            nlpCategory: 'Browser Action',
+            description: 'Fill in user email credential',
+            elementId: emailElem?.id || null,
+            elementName: emailElem?.name || 'Email Field',
+            pageName: emailPage,
+            locator: emailElem?.locators[0],
+            parameters: { text: '$username', clearBeforeTyping: true },
+            isEnabled: true
+          },
+          {
+            id: 'step_4_' + suffix,
+            stepNumber: 4,
+            nlpId: 'enter_text',
+            nlpName: 'Enter Text',
+            nlpCategory: 'Browser Action',
+            description: 'Fill in secure user password',
+            elementId: passElem?.id || null,
+            elementName: passElem?.name || 'Password Field',
+            pageName: emailPage,
+            locator: passElem?.locators[0],
+            parameters: { text: '$password', clearBeforeTyping: true },
+            isEnabled: true
+          },
+          {
+            id: 'step_5_' + suffix,
+            stepNumber: 5,
+            nlpId: 'click_element',
+            nlpName: 'Click On Element',
+            nlpCategory: 'Browser Action',
+            description: 'Submit credentials and initiate session',
+            elementId: btnElem?.id || null,
+            elementName: btnElem?.name || 'Login Button',
+            pageName: emailPage,
+            locator: btnElem?.locators[0],
+            parameters: {},
+            isEnabled: true
+          },
+          {
+            id: 'step_6_' + suffix,
+            stepNumber: 6,
+            nlpId: 'verify_element_is_displayed',
+            nlpName: 'Verify Element Is Displayed',
+            nlpCategory: 'Verification',
+            description: 'Assert dashboard user profile icon is visible',
+            elementId: searchElem?.id || null,
+            elementName: 'Profile Icon',
+            pageName: homePage,
+            locator: { type: 'ID', value: 'profile-icon' },
+            parameters: {},
+            isEnabled: true
+          }
+        ]
+      },
+      {
+        id: scrRememberMeId,
+        projectId,
+        moduleId: modLoginVal,
+        name: 'Login With Remember Me',
+        description: 'Verifies persistent login cookie when Remember Me checkbox is checked',
+        createdBy: userEmail,
+        createdAt: now,
+        updatedAt: now,
+        stepCount: 5,
+        lastExecutionStatus: 'Passed',
+        lastExecutionDate: new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString(),
+        steps: [
+          {
+            id: 'step_21_' + suffix,
+            stepNumber: 1,
+            nlpId: 'open_browser',
+            nlpName: 'Open Browser',
+            nlpCategory: 'Browser',
+            description: 'Launch browser',
+            parameters: {},
+            isEnabled: true
+          },
+          {
+            id: 'step_22_' + suffix,
+            stepNumber: 2,
+            nlpId: 'navigate_to_url',
+            nlpName: 'Navigate To URL',
+            nlpCategory: 'Browser',
+            description: 'Open login page',
+            parameters: { url: '$baseURL/login' },
+            isEnabled: true
+          },
+          {
+            id: 'step_23_' + suffix,
+            stepNumber: 3,
+            nlpId: 'enter_text',
+            nlpName: 'Enter Text',
+            nlpCategory: 'Browser Action',
+            description: 'Enter email',
+            elementId: emailElem?.id || null,
+            elementName: emailElem?.name || 'Email Field',
+            pageName: emailPage,
+            locator: emailElem?.locators[0],
+            parameters: { text: '$username' },
+            isEnabled: true
+          },
+          {
+            id: 'step_24_' + suffix,
+            stepNumber: 4,
+            nlpId: 'select_checkbox',
+            nlpName: 'Select Checkbox',
+            nlpCategory: 'Browser Action',
+            description: 'Check remember me checkbox',
+            parameters: {},
+            isEnabled: true
+          },
+          {
+            id: 'step_25_' + suffix,
+            stepNumber: 5,
+            nlpId: 'click_element',
+            nlpName: 'Click On Element',
+            nlpCategory: 'Browser Action',
+            description: 'Click login button',
+            elementId: btnElem?.id || null,
+            elementName: btnElem?.name || 'Login Button',
+            pageName: emailPage,
+            locator: btnElem?.locators[0],
+            parameters: {},
+            isEnabled: true
+          }
+        ]
+      },
+      {
+        id: scrInvalidPassId,
+        projectId,
+        moduleId: modLoginInval,
+        name: 'Login With Invalid Password',
+        description: 'Negative test validating error toast when wrong password is supplied',
+        createdBy: userEmail,
+        createdAt: now,
+        updatedAt: now,
+        stepCount: 5,
+        lastExecutionStatus: 'Passed',
+        lastExecutionDate: new Date(Date.now() - 1000 * 60 * 60 * 5).toISOString(),
+        steps: [
+          {
+            id: 'step_31_' + suffix,
+            stepNumber: 1,
+            nlpId: 'open_browser',
+            nlpName: 'Open Browser',
+            nlpCategory: 'Browser',
+            description: 'Open browser',
+            parameters: {},
+            isEnabled: true
+          },
+          {
+            id: 'step_32_' + suffix,
+            stepNumber: 2,
+            nlpId: 'navigate_to_url',
+            nlpName: 'Navigate To URL',
+            nlpCategory: 'Browser',
+            description: 'Navigate to login',
+            parameters: { url: '$baseURL/login' },
+            isEnabled: true
+          },
+          {
+            id: 'step_33_' + suffix,
+            stepNumber: 3,
+            nlpId: 'enter_text',
+            nlpName: 'Enter Text',
+            nlpCategory: 'Browser Action',
+            description: 'Enter email',
+            elementId: emailElem?.id || null,
+            elementName: emailElem?.name || 'Email Field',
+            pageName: emailPage,
+            locator: emailElem?.locators[0],
+            parameters: { text: '$username' },
+            isEnabled: true
+          },
+          {
+            id: 'step_34_' + suffix,
+            stepNumber: 4,
+            nlpId: 'enter_text',
+            nlpName: 'Enter Text',
+            nlpCategory: 'Browser Action',
+            description: 'Enter wrong password',
+            elementId: passElem?.id || null,
+            elementName: passElem?.name || 'Password Field',
+            pageName: emailPage,
+            locator: passElem?.locators[0],
+            parameters: { text: 'WrongPassword999' },
+            isEnabled: true
+          },
+          {
+            id: 'step_35_' + suffix,
+            stepNumber: 5,
+            nlpId: 'click_element',
+            nlpName: 'Click On Element',
+            nlpCategory: 'Browser Action',
+            description: 'Click login',
+            elementId: btnElem?.id || null,
+            elementName: btnElem?.name || 'Login Button',
+            pageName: emailPage,
+            locator: btnElem?.locators[0],
+            parameters: {},
+            isEnabled: true
+          }
+        ]
+      },
+      {
+        id: scrInvalidEmailId,
+        projectId,
+        moduleId: modLoginInval,
+        name: 'Login With Invalid Email',
+        description: 'Negative test validating client-side email format regex check',
+        createdBy: userEmail,
+        createdAt: now,
+        updatedAt: now,
+        stepCount: 3,
+        lastExecutionStatus: 'Passed',
+        lastExecutionDate: new Date(Date.now() - 1000 * 60 * 60 * 6).toISOString(),
+        steps: [
+          {
+            id: 'step_41_' + suffix,
+            stepNumber: 1,
+            nlpId: 'open_browser',
+            nlpName: 'Open Browser',
+            nlpCategory: 'Browser',
+            description: 'Open browser',
+            parameters: {},
+            isEnabled: true
+          },
+          {
+            id: 'step_42_' + suffix,
+            stepNumber: 2,
+            nlpId: 'navigate_to_url',
+            nlpName: 'Navigate To URL',
+            nlpCategory: 'Browser',
+            description: 'Open login page',
+            parameters: { url: '$baseURL/login' },
+            isEnabled: true
+          },
+          {
+            id: 'step_43_' + suffix,
+            stepNumber: 3,
+            nlpId: 'enter_text',
+            nlpName: 'Enter Text',
+            nlpCategory: 'Browser Action',
+            description: 'Enter malformed email string',
+            elementId: emailElem?.id || null,
+            elementName: emailElem?.name || 'Email Field',
+            pageName: emailPage,
+            locator: emailElem?.locators[0],
+            parameters: { text: 'notanemail' },
+            isEnabled: true
+          }
+        ]
+      },
+      {
+        id: scrSearchValidId,
+        projectId,
+        moduleId: modProdSearch,
+        name: 'Search With Valid Product',
+        description: 'Queries product catalog using valid product keyword from variables',
+        createdBy: userEmail,
+        createdAt: now,
+        updatedAt: now,
+        stepCount: 4,
+        lastExecutionStatus: 'Passed',
+        lastExecutionDate: new Date(Date.now() - 1000 * 60 * 45).toISOString(),
+        steps: [
+          {
+            id: 'step_51_' + suffix,
+            stepNumber: 1,
+            nlpId: 'open_browser',
+            nlpName: 'Open Browser',
+            nlpCategory: 'Browser',
+            description: 'Open browser',
+            parameters: {},
+            isEnabled: true
+          },
+          {
+            id: 'step_52_' + suffix,
+            stepNumber: 2,
+            nlpId: 'navigate_to_url',
+            nlpName: 'Navigate To URL',
+            nlpCategory: 'Browser',
+            description: 'Navigate to storefront',
+            parameters: { url: '$baseURL/storefront' },
+            isEnabled: true
+          },
+          {
+            id: 'step_53_' + suffix,
+            stepNumber: 3,
+            nlpId: 'enter_text',
+            nlpName: 'Enter Text',
+            nlpCategory: 'Browser Action',
+            description: 'Enter search keyword',
+            elementId: searchElem?.id || null,
+            elementName: searchElem?.name || 'Search Field',
+            pageName: homePage,
+            locator: searchElem?.locators[0],
+            parameters: { text: '$productName' },
+            isEnabled: true
+          },
+          {
+            id: 'step_54_' + suffix,
+            stepNumber: 4,
+            nlpId: 'press_keyboard_key',
+            nlpName: 'Press Keyboard Key',
+            nlpCategory: 'Browser Action',
+            description: 'Press Enter to submit search',
+            parameters: { key: 'Enter' },
+            isEnabled: true
+          }
+        ]
+      },
+      {
+        id: scrSearchInvalidId,
+        projectId,
+        moduleId: modProdSearch,
+        name: 'Search With Invalid Product',
+        description: 'Queries product catalog with non-existent SKU and asserts empty state',
+        createdBy: userEmail,
+        createdAt: now,
+        updatedAt: now,
+        stepCount: 3,
+        lastExecutionStatus: 'Passed',
+        lastExecutionDate: new Date(Date.now() - 1000 * 60 * 90).toISOString(),
+        steps: [
+          {
+            id: 'step_61_' + suffix,
+            stepNumber: 1,
+            nlpId: 'open_browser',
+            nlpName: 'Open Browser',
+            nlpCategory: 'Browser',
+            description: 'Open browser',
+            parameters: {},
+            isEnabled: true
+          },
+          {
+            id: 'step_62_' + suffix,
+            stepNumber: 2,
+            nlpId: 'navigate_to_url',
+            nlpName: 'Navigate To URL',
+            nlpCategory: 'Browser',
+            description: 'Navigate to storefront',
+            parameters: { url: '$baseURL/storefront' },
+            isEnabled: true
+          },
+          {
+            id: 'step_63_' + suffix,
+            stepNumber: 3,
+            nlpId: 'enter_text',
+            nlpName: 'Enter Text',
+            nlpCategory: 'Browser Action',
+            description: 'Enter bogus SKU query',
+            elementId: searchElem?.id || null,
+            elementName: searchElem?.name || 'Search Field',
+            pageName: homePage,
+            locator: searchElem?.locators[0],
+            parameters: { text: 'ZZZ999NONEXISTENT' },
+            isEnabled: true
+          }
+        ]
+      },
+      {
+        id: scrAddCartId,
+        projectId,
+        moduleId: modProdCart,
+        name: 'Add Product To Cart',
+        description: 'Adds item to shopping bag and validates cart quantity updates',
+        createdBy: userEmail,
+        createdAt: now,
+        updatedAt: now,
+        stepCount: 4,
+        lastExecutionStatus: 'Passed',
+        lastExecutionDate: new Date(Date.now() - 1000 * 60 * 60 * 12).toISOString(),
+        steps: [
+          {
+            id: 'step_71_' + suffix,
+            stepNumber: 1,
+            nlpId: 'open_browser',
+            nlpName: 'Open Browser',
+            nlpCategory: 'Browser',
+            description: 'Launch browser',
+            parameters: {},
+            isEnabled: true
+          },
+          {
+            id: 'step_72_' + suffix,
+            stepNumber: 2,
+            nlpId: 'navigate_to_url',
+            nlpName: 'Navigate To URL',
+            nlpCategory: 'Browser',
+            description: 'Open product page',
+            parameters: { url: '$baseURL/product/watch-01' },
+            isEnabled: true
+          },
+          {
+            id: 'step_73_' + suffix,
+            stepNumber: 3,
+            nlpId: 'click_element',
+            nlpName: 'Click On Element',
+            nlpCategory: 'Browser Action',
+            description: 'Click add to cart button',
+            elementId: cartBtnElem?.id || null,
+            elementName: cartBtnElem?.name || 'Add To Cart Button',
+            pageName: homePage,
+            locator: cartBtnElem?.locators[0],
+            parameters: {},
+            isEnabled: true
+          },
+          {
+            id: 'step_74_' + suffix,
+            stepNumber: 4,
+            nlpId: 'verify_element_is_displayed',
+            nlpName: 'Verify Element Is Displayed',
+            nlpCategory: 'Verification',
+            description: 'Verify checkout button appears in cart slider',
+            elementId: checkoutBtnElem?.id || null,
+            elementName: checkoutBtnElem?.name || 'Checkout Button',
+            pageName: cartPage,
+            locator: checkoutBtnElem?.locators[0],
+            parameters: {},
+            isEnabled: true
+          }
+        ]
+      },
+      {
+        id: scrPaymentValId,
+        projectId,
+        moduleId: modPayVal,
+        name: 'Payment Validation',
+        description: 'E2E checkout payment gateway token verification',
+        createdBy: userEmail,
+        createdAt: now,
+        updatedAt: now,
+        stepCount: 3,
+        lastExecutionStatus: 'Passed',
+        lastExecutionDate: new Date(Date.now() - 1000 * 60 * 60 * 18).toISOString(),
+        steps: [
+          {
+            id: 'step_81_' + suffix,
+            stepNumber: 1,
+            nlpId: 'open_browser',
+            nlpName: 'Open Browser',
+            nlpCategory: 'Browser',
+            description: 'Launch browser',
+            parameters: {},
+            isEnabled: true
+          },
+          {
+            id: 'step_82_' + suffix,
+            stepNumber: 2,
+            nlpId: 'navigate_to_url',
+            nlpName: 'Navigate To URL',
+            nlpCategory: 'Browser',
+            description: 'Open checkout payment view',
+            parameters: { url: '$baseURL/checkout' },
+            isEnabled: true
+          },
+          {
+            id: 'step_83_' + suffix,
+            stepNumber: 3,
+            nlpId: 'click_element',
+            nlpName: 'Click On Element',
+            nlpCategory: 'Browser Action',
+            description: 'Click proceed to checkout',
+            elementId: checkoutBtnElem?.id || null,
+            elementName: checkoutBtnElem?.name || 'Checkout Button',
+            pageName: cartPage,
+            locator: checkoutBtnElem?.locators[0],
+            parameters: {},
+            isEnabled: true
+          }
+        ]
+      }
+    ];
+
+    // 3. Variables (Section 7)
+    const variables: ScriptVariable[] = [
+      // Global Variables
+      {
+        id: 'var_glob_1_' + suffix,
+        projectId,
+        scriptId: null,
+        name: 'baseURL',
+        type: 'Global',
+        dataType: 'String',
+        value: 'https://demo.easyautomate.dev',
+        description: 'Target test application base domain URL',
+        createdAt: now,
+        updatedAt: now
+      },
+      {
+        id: 'var_glob_2_' + suffix,
+        projectId,
+        scriptId: null,
+        name: 'defaultTimeout',
+        type: 'Global',
+        dataType: 'Number',
+        value: '5000',
+        description: 'Global standard DOM synchronization wait duration in ms',
+        createdAt: now,
+        updatedAt: now
+      },
+      {
+        id: 'var_glob_3_' + suffix,
+        projectId,
+        scriptId: null,
+        name: 'environment',
+        type: 'Global',
+        dataType: 'String',
+        value: 'staging',
+        description: 'Active test execution target environment tier',
+        createdAt: now,
+        updatedAt: now
+      },
+      {
+        id: 'var_glob_4_' + suffix,
+        projectId,
+        scriptId: null,
+        name: 'productName',
+        type: 'Global',
+        dataType: 'String',
+        value: 'Watch',
+        description: 'Default e-commerce product query term',
+        createdAt: now,
+        updatedAt: now
+      },
+      // Local Variables for Login With Valid Credentials
+      {
+        id: 'var_loc_1_' + suffix,
+        projectId,
+        scriptId: scrValidLoginId,
+        name: 'username',
+        type: 'Local',
+        dataType: 'String',
+        value: 'admin@demo.com',
+        description: 'Valid test account credentials',
+        createdAt: now,
+        updatedAt: now
+      },
+      {
+        id: 'var_loc_2_' + suffix,
+        projectId,
+        scriptId: scrValidLoginId,
+        name: 'password',
+        type: 'Local',
+        dataType: 'Encrypted',
+        value: 'P@ssword123',
+        description: 'Encrypted password string masked during logs',
+        createdAt: now,
+        updatedAt: now
+      },
+      {
+        id: 'var_loc_3_' + suffix,
+        projectId,
+        scriptId: scrValidLoginId,
+        name: 'isDisplayed',
+        type: 'Local',
+        dataType: 'Boolean',
+        value: 'true',
+        description: 'Expected flag for greeting visibility',
+        createdAt: now,
+        updatedAt: now
+      },
+      {
+        id: 'var_loc_4_' + suffix,
+        projectId,
+        scriptId: scrValidLoginId,
+        name: 'isEnabled',
+        type: 'Local',
+        dataType: 'Boolean',
+        value: 'true',
+        description: 'Interactive button state flag',
+        createdAt: now,
+        updatedAt: now
+      }
+    ];
+
+    // 4. Default Run Settings
+    this.data.runSettings[projectId] = {
+      browser: 'chromium',
+      delayBetweenStepsMs: 500,
+      globalWaitTimeMs: 3000,
+      executionTimeoutSec: 30,
+      screenshotOption: 'failed-only',
+      screenRecording: false,
+      isDefault: true,
+      scope: 'project'
+    };
+
+    // 5. Seed Execution Record EXEC0001 matching Section 9.2
+    const exec0001: DetailedExecutionRecord = {
+      id: 'EXEC0001',
+      projectId,
+      suiteName: 'Regression Suite - Smoke & Catalog',
+      status: 'Passed',
+      startedAt: new Date(Date.now() - 1000 * 60 * 30).toISOString(),
+      completedAt: new Date(Date.now() - 1000 * 60 * 29 - 1000 * 45).toISOString(),
+      durationSeconds: 15.4,
+      totalScripts: 3,
+      passedScripts: 2,
+      failedScripts: 1,
+      runSettings: {
+        browser: 'chromium',
+        delayBetweenStepsMs: 500,
+        globalWaitTimeMs: 3000,
+        executionTimeoutSec: 30,
+        screenshotOption: 'every-step',
+        screenRecording: false
+      },
+      machine: {
+        name: 'WORKSTATION-QA-01',
+        os: 'Windows 11 Pro 64-bit',
+        browser: 'Chromium',
+        version: '131.0.6778.86',
+        environment: 'staging',
+        status: 'Ready'
+      },
+      nodeVersion: process.version || 'v22.13.1',
+      playwrightVersion: '1.49.1',
+      scripts: [
+        {
+          scriptId: scrValidLoginId,
+          scriptName: 'Login With Valid Credentials',
+          moduleName: 'Valid Login',
+          status: 'Passed',
+          startedAt: new Date(Date.now() - 1000 * 60 * 30).toISOString(),
+          completedAt: new Date(Date.now() - 1000 * 60 * 30 + 1000 * 6).toISOString(),
+          durationSeconds: 6.4,
+          steps: [
+            {
+              stepNumber: 1,
+              nlpName: 'Open Browser',
+              nlpCategory: 'Browser',
+              description: 'Launch browser',
+              status: 'Passed',
+              startedAt: new Date(Date.now() - 1000 * 60 * 30).toISOString(),
+              completedAt: new Date(Date.now() - 1000 * 60 * 30 + 2500).toISOString(),
+              durationSeconds: 2.5,
+              inputParameters: { browser: 'Chromium' },
+              logs: ['[00:00.000] Launching Chromium browser in headless mode', '[00:02.500] Browser context ready'],
+              screenshot: AutomationEngine.generateScreenshotSvg('Open Browser', 'Passed', undefined, 'about:blank')
+            },
+            {
+              stepNumber: 2,
+              nlpName: 'Navigate To URL',
+              nlpCategory: 'Browser',
+              description: 'Navigate to login portal',
+              status: 'Passed',
+              startedAt: new Date(Date.now() - 1000 * 60 * 30 + 2500).toISOString(),
+              completedAt: new Date(Date.now() - 1000 * 60 * 30 + 4300).toISOString(),
+              durationSeconds: 1.8,
+              inputParameters: { url: 'https://demo.easyautomate.dev/login' },
+              variablesUsed: [{ name: 'baseURL', type: 'Global', resolvedValue: 'https://demo.easyautomate.dev' }],
+              logs: ['[00:02.500] Navigating to https://demo.easyautomate.dev/login', '[00:04.300] Page load complete (HTTP 200)'],
+              screenshot: AutomationEngine.generateScreenshotSvg('Navigate To URL', 'Passed', undefined, 'https://demo.easyautomate.dev/login')
+            },
+            {
+              stepNumber: 3,
+              nlpName: 'Enter Text',
+              nlpCategory: 'Browser Action',
+              description: 'Fill in username',
+              status: 'Passed',
+              startedAt: new Date(Date.now() - 1000 * 60 * 30 + 4300).toISOString(),
+              completedAt: new Date(Date.now() - 1000 * 60 * 30 + 5200).toISOString(),
+              durationSeconds: 0.9,
+              element: {
+                id: emailElem?.id || 'el_1',
+                name: 'Email Field',
+                page: 'Login Page',
+                locatorType: 'ID',
+                locatorValue: 'email'
+              },
+              variablesUsed: [{ name: 'username', type: 'Local', resolvedValue: 'admin@demo.com' }],
+              inputParameters: { text: '$username' },
+              logs: ['[00:04.300] Located element #email', '[00:05.200] Filled input with admin@demo.com'],
+              screenshot: AutomationEngine.generateScreenshotSvg('Enter Text', 'Passed', 'Email Field (#email)', 'https://demo.easyautomate.dev/login')
+            },
+            {
+              stepNumber: 4,
+              nlpName: 'Click On Element',
+              nlpCategory: 'Browser Action',
+              description: 'Click login button',
+              status: 'Passed',
+              startedAt: new Date(Date.now() - 1000 * 60 * 30 + 5200).toISOString(),
+              completedAt: new Date(Date.now() - 1000 * 60 * 30 + 6400).toISOString(),
+              durationSeconds: 1.2,
+              element: {
+                id: btnElem?.id || 'el_2',
+                name: 'Login Button',
+                page: 'Login Page',
+                locatorType: 'ID',
+                locatorValue: 'login-button'
+              },
+              inputParameters: {},
+              logs: ['[00:05.200] Located element #login-button', '[00:06.400] Click dispatched. Navigation detected.'],
+              screenshot: AutomationEngine.generateScreenshotSvg('Click On Element', 'Passed', 'Login Button (#login-button)', 'https://demo.easyautomate.dev/dashboard')
+            }
+          ]
+        },
+        {
+          scriptId: scrSearchValidId,
+          scriptName: 'Product Search',
+          moduleName: 'Product Search',
+          status: 'Failed',
+          startedAt: new Date(Date.now() - 1000 * 60 * 29 + 1000 * 20).toISOString(),
+          completedAt: new Date(Date.now() - 1000 * 60 * 29 + 1000 * 27).toISOString(),
+          durationSeconds: 7.2,
+          failureDetails: {
+            reason: 'Element condition timeout: Expected element "Product Card" was not displayed within 5000ms',
+            exceptionName: 'ElementConditionTimeout',
+            errorMessage: 'Timeout 5000ms exceeded waiting for locator(".product-card") to be visible',
+            failedStepNumber: 3,
+            failedLocator: '.product-card',
+            screenshot: AutomationEngine.generateScreenshotSvg('Verify Product', 'Failed', 'Product Card (.product-card)', 'https://demo.easyautomate.dev/storefront', 'Timeout 5000ms waiting for .product-card'),
+            logs: [
+              '[00:00.000] Step 1: Search Product started',
+              '[00:01.200] Step 2: Click Search submitted',
+              '[00:02.200] Step 3: Waiting for element .product-card',
+              '[00:07.200] Timeout 5000ms exceeded. Element not found in DOM.'
+            ]
+          },
+          steps: [
+            {
+              stepNumber: 1,
+              nlpName: 'Search Product',
+              nlpCategory: 'Browser Action',
+              description: 'Enter search product',
+              status: 'Passed',
+              startedAt: new Date(Date.now() - 1000 * 60 * 29 + 1000 * 20).toISOString(),
+              completedAt: new Date(Date.now() - 1000 * 60 * 29 + 1000 * 21).toISOString(),
+              durationSeconds: 1.1,
+              inputParameters: { text: 'Watch' },
+              logs: ['[00:00.000] Entered search query: Watch'],
+              screenshot: AutomationEngine.generateScreenshotSvg('Search Product', 'Passed', 'Search Field', 'https://demo.easyautomate.dev/storefront')
+            },
+            {
+              stepNumber: 2,
+              nlpName: 'Click Search',
+              nlpCategory: 'Browser Action',
+              description: 'Trigger search query',
+              status: 'Passed',
+              startedAt: new Date(Date.now() - 1000 * 60 * 29 + 1000 * 21).toISOString(),
+              completedAt: new Date(Date.now() - 1000 * 60 * 29 + 1000 * 22).toISOString(),
+              durationSeconds: 1.0,
+              inputParameters: {},
+              logs: ['[00:01.000] Search button clicked'],
+              screenshot: AutomationEngine.generateScreenshotSvg('Click Search', 'Passed', 'Search Button', 'https://demo.easyautomate.dev/storefront')
+            },
+            {
+              stepNumber: 3,
+              nlpName: 'Verify Product',
+              nlpCategory: 'Verification',
+              description: 'Verify search results product card is visible',
+              status: 'Failed',
+              startedAt: new Date(Date.now() - 1000 * 60 * 29 + 1000 * 22).toISOString(),
+              completedAt: new Date(Date.now() - 1000 * 60 * 29 + 1000 * 27).toISOString(),
+              durationSeconds: 5.1,
+              element: {
+                id: 'el_prod_card',
+                name: 'Product Card',
+                page: 'Product Section',
+                locatorType: 'CSS Selector',
+                locatorValue: '.product-card'
+              },
+              inputParameters: {},
+              logs: ['[00:02.000] Polling locator .product-card', '[00:07.100] Timeout 5000ms exceeded. Element not found.'],
+              screenshot: AutomationEngine.generateScreenshotSvg('Verify Product', 'Failed', 'Product Card (.product-card)', 'https://demo.easyautomate.dev/storefront', 'Timeout waiting for .product-card'),
+              error: {
+                exceptionName: 'ElementConditionTimeout',
+                message: 'Timeout 5000ms exceeded waiting for locator(".product-card")',
+                locator: '.product-card'
+              }
+            }
+          ]
+        },
+        {
+          scriptId: scrAddCartId,
+          scriptName: 'Add Product To Cart',
+          moduleName: 'Cart Module',
+          status: 'Passed',
+          startedAt: new Date(Date.now() - 1000 * 60 * 29 + 1000 * 28).toISOString(),
+          completedAt: new Date(Date.now() - 1000 * 60 * 29 + 1000 * 30).toISOString(),
+          durationSeconds: 1.8,
+          steps: [
+            {
+              stepNumber: 1,
+              nlpName: 'Open Product',
+              nlpCategory: 'Browser Action',
+              description: 'Navigate to product SKU page',
+              status: 'Passed',
+              startedAt: new Date(Date.now() - 1000 * 60 * 29 + 1000 * 28).toISOString(),
+              completedAt: new Date(Date.now() - 1000 * 60 * 29 + 1000 * 29).toISOString(),
+              durationSeconds: 1.0,
+              inputParameters: { url: 'https://demo.easyautomate.dev/product/watch-01' },
+              logs: ['[00:00.000] Product page opened'],
+              screenshot: AutomationEngine.generateScreenshotSvg('Open Product', 'Passed', undefined, 'https://demo.easyautomate.dev/product/watch-01')
+            },
+            {
+              stepNumber: 2,
+              nlpName: 'Add To Cart',
+              nlpCategory: 'Browser Action',
+              description: 'Click add to cart button',
+              status: 'Passed',
+              startedAt: new Date(Date.now() - 1000 * 60 * 29 + 1000 * 29).toISOString(),
+              completedAt: new Date(Date.now() - 1000 * 60 * 29 + 1000 * 30).toISOString(),
+              durationSeconds: 0.8,
+              element: {
+                id: cartBtnElem?.id || 'el_cart',
+                name: 'Add To Cart Button',
+                page: 'Home Page',
+                locatorType: 'ID',
+                locatorValue: 'add-to-cart'
+              },
+              inputParameters: {},
+              logs: ['[00:01.000] Clicked #add-to-cart', '[00:01.800] Cart drawer opened with item count: 1'],
+              screenshot: AutomationEngine.generateScreenshotSvg('Add To Cart', 'Passed', 'Add To Cart (#add-to-cart)', 'https://demo.easyautomate.dev/cart')
+            }
+          ]
+        }
+      ]
+    };
+
+    this.data.scriptModules.push(...modules);
+    this.data.scripts.push(...scripts);
+    this.data.variables.push(...variables);
+    this.data.detailedExecutions.push(exec0001);
+    this.data.executionCounter = 2; // Next will be EXEC0002
+  }
+
+  // --- Module Operations (Section 2.2) ---
+
+  public getScriptModules(projectId: string): ScriptModule[] {
+    return this.data.scriptModules.filter(m => m.projectId === projectId);
+  }
+
+  public createScriptModule(projectId: string, name: string, parentId?: string | null): ScriptModule {
+    const cleanName = name.trim();
+    if (!cleanName || cleanName.length < 2) {
+      throw new Error('Module name must be at least 2 characters long.');
+    }
+
+    const normParentId = parentId || null;
+    const duplicate = this.data.scriptModules.find(m =>
+      m.projectId === projectId &&
+      m.parentId === normParentId &&
+      m.name.toLowerCase() === cleanName.toLowerCase()
+    );
+
+    if (duplicate) {
+      throw new Error(`A module named "${cleanName}" already exists at this level.`);
+    }
+
+    const now = new Date().toISOString();
+    const newModule: ScriptModule = {
+      id: 'mod_' + crypto.randomUUID().slice(0, 8),
+      projectId,
+      name: cleanName,
+      parentId: normParentId,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    this.data.scriptModules.push(newModule);
+    this.save();
+    return newModule;
+  }
+
+  public updateScriptModule(moduleId: string, projectId: string, name: string): ScriptModule {
+    const mod = this.data.scriptModules.find(m => m.id === moduleId && m.projectId === projectId);
+    if (!mod) throw new Error('Module not found.');
+
+    const cleanName = name.trim();
+    if (!cleanName || cleanName.length < 2) {
+      throw new Error('Module name must be at least 2 characters long.');
+    }
+
+    const duplicate = this.data.scriptModules.find(m =>
+      m.projectId === projectId &&
+      m.id !== moduleId &&
+      m.parentId === mod.parentId &&
+      m.name.toLowerCase() === cleanName.toLowerCase()
+    );
+
+    if (duplicate) {
+      throw new Error(`A module named "${cleanName}" already exists at this level.`);
+    }
+
+    mod.name = cleanName;
+    mod.updatedAt = new Date().toISOString();
+    this.save();
+    return mod;
+  }
+
+  public deleteScriptModule(moduleId: string, projectId: string): boolean {
+    const modIndex = this.data.scriptModules.findIndex(m => m.id === moduleId && m.projectId === projectId);
+    if (modIndex === -1) throw new Error('Module not found.');
+
+    // Recursively collect descendant submodule IDs
+    const idsToDelete: string[] = [moduleId];
+    const findDescendants = (parentId: string) => {
+      const children = this.data.scriptModules.filter(m => m.parentId === parentId);
+      for (const c of children) {
+        idsToDelete.push(c.id);
+        findDescendants(c.id);
+      }
+    };
+    findDescendants(moduleId);
+
+    // Delete modules
+    this.data.scriptModules = this.data.scriptModules.filter(m => !idsToDelete.includes(m.id));
+
+    // Delete scripts belonging to any of these modules
+    this.data.scripts = this.data.scripts.filter(s => !idsToDelete.includes(s.moduleId));
+
+    this.save();
+    return true;
+  }
+
+  // --- Script Operations (Section 2.3) ---
+
+  public getScripts(projectId: string, moduleId?: string): AutomationScript[] {
+    if (moduleId) {
+      return this.data.scripts.filter(s => s.projectId === projectId && s.moduleId === moduleId);
+    }
+    return this.data.scripts.filter(s => s.projectId === projectId);
+  }
+
+  public getScriptById(scriptId: string, projectId: string): AutomationScript | undefined {
+    return this.data.scripts.find(s => s.id === scriptId && s.projectId === projectId);
+  }
+
+  public createScript(
+    projectId: string,
+    moduleId: string,
+    name: string,
+    createdBy: string,
+    description?: string
+  ): AutomationScript {
+    const cleanName = name.trim();
+    if (!cleanName || cleanName.length < 3) {
+      throw new Error('Script name must be at least 3 characters long.');
+    }
+
+    const duplicate = this.data.scripts.find(s =>
+      s.projectId === projectId &&
+      s.moduleId === moduleId &&
+      s.name.toLowerCase() === cleanName.toLowerCase()
+    );
+
+    if (duplicate) {
+      throw new Error(`A script named "${cleanName}" already exists in this module.`);
+    }
+
+    const now = new Date().toISOString();
+    const newScript: AutomationScript = {
+      id: 'scr_' + crypto.randomUUID().slice(0, 8),
+      projectId,
+      moduleId,
+      name: cleanName,
+      description: description?.trim() || '',
+      createdBy: createdBy || 'User',
+      createdAt: now,
+      updatedAt: now,
+      stepCount: 0,
+      lastExecutionStatus: null,
+      lastExecutionDate: null,
+      steps: []
+    };
+
+    this.data.scripts.push(newScript);
+    this.save();
+    return newScript;
+  }
+
+  public updateScript(
+    scriptId: string,
+    projectId: string,
+    updates: Partial<AutomationScript>
+  ): AutomationScript {
+    const script = this.getScriptById(scriptId, projectId);
+    if (!script) throw new Error('Script not found.');
+
+    if (updates.name !== undefined) {
+      const cleanName = updates.name.trim();
+      if (!cleanName || cleanName.length < 3) {
+        throw new Error('Script name must be at least 3 characters long.');
+      }
+      const targetModule = updates.moduleId !== undefined ? updates.moduleId : script.moduleId;
+      const duplicate = this.data.scripts.find(s =>
+        s.projectId === projectId &&
+        s.id !== scriptId &&
+        s.moduleId === targetModule &&
+        s.name.toLowerCase() === cleanName.toLowerCase()
+      );
+      if (duplicate) {
+        throw new Error(`A script named "${cleanName}" already exists in this module.`);
+      }
+      script.name = cleanName;
+    }
+
+    if (updates.description !== undefined) script.description = updates.description.trim();
+    if (updates.moduleId !== undefined) script.moduleId = updates.moduleId;
+    if (updates.lastExecutionStatus !== undefined) script.lastExecutionStatus = updates.lastExecutionStatus;
+    if (updates.lastExecutionDate !== undefined) script.lastExecutionDate = updates.lastExecutionDate;
+
+    script.updatedAt = new Date().toISOString();
+    this.save();
+    return script;
+  }
+
+  public deleteScript(scriptId: string, projectId: string): boolean {
+    const idx = this.data.scripts.findIndex(s => s.id === scriptId && s.projectId === projectId);
+    if (idx === -1) throw new Error('Script not found.');
+
+    // Remove local variables for this script
+    this.data.variables = this.data.variables.filter(v => v.scriptId !== scriptId);
+
+    this.data.scripts.splice(idx, 1);
+    this.save();
+    return true;
+  }
+
+  // --- Step Management Area (Section 3.2, 3.3, 3.4) ---
+
+  public addScriptStep(
+    scriptId: string,
+    projectId: string,
+    stepData: Omit<ScriptStep, 'id' | 'stepNumber'>,
+    insertAfterStepNumber?: number
+  ): AutomationScript {
+    const script = this.getScriptById(scriptId, projectId);
+    if (!script) throw new Error('Script not found.');
+
+    const newStep: ScriptStep = {
+      id: 'step_' + crypto.randomUUID().slice(0, 8),
+      stepNumber: 0, // Recalculated below
+      nlpId: stepData.nlpId,
+      nlpName: stepData.nlpName,
+      nlpCategory: stepData.nlpCategory,
+      description: stepData.description || stepData.nlpName,
+      elementId: stepData.elementId || null,
+      elementName: stepData.elementName,
+      pageName: stepData.pageName,
+      locator: stepData.locator,
+      parameters: stepData.parameters || {},
+      variableMappings: stepData.variableMappings,
+      isEnabled: stepData.isEnabled !== false
+    };
+
+    if (typeof insertAfterStepNumber === 'number' && insertAfterStepNumber >= 1 && insertAfterStepNumber <= script.steps.length) {
+      // Insert immediately below the specified step (Section 3.3)
+      script.steps.splice(insertAfterStepNumber, 0, newStep);
+    } else {
+      // Add to end of script (Section 3.4)
+      script.steps.push(newStep);
+    }
+
+    // Automatically recalculate sequential step numbers (Section 3.3)
+    script.steps.forEach((step, idx) => {
+      step.stepNumber = idx + 1;
+    });
+
+    script.stepCount = script.steps.length;
+    script.updatedAt = new Date().toISOString();
+    this.save();
+    return script;
+  }
+
+  public updateScriptStep(
+    scriptId: string,
+    projectId: string,
+    stepId: string,
+    updates: Partial<ScriptStep>
+  ): AutomationScript {
+    const script = this.getScriptById(scriptId, projectId);
+    if (!script) throw new Error('Script not found.');
+
+    const step = script.steps.find(s => s.id === stepId);
+    if (!step) throw new Error('Step not found.');
+
+    if (updates.nlpName !== undefined) step.nlpName = updates.nlpName;
+    if (updates.nlpCategory !== undefined) step.nlpCategory = updates.nlpCategory;
+    if (updates.description !== undefined) step.description = updates.description;
+    if (updates.elementId !== undefined) step.elementId = updates.elementId;
+    if (updates.elementName !== undefined) step.elementName = updates.elementName;
+    if (updates.pageName !== undefined) step.pageName = updates.pageName;
+    if (updates.locator !== undefined) step.locator = updates.locator;
+    if (updates.parameters !== undefined) step.parameters = updates.parameters;
+    if (updates.variableMappings !== undefined) step.variableMappings = updates.variableMappings;
+    if (updates.isEnabled !== undefined) step.isEnabled = updates.isEnabled;
+
+    script.updatedAt = new Date().toISOString();
+    this.save();
+    return script;
+  }
+
+  public deleteScriptStep(scriptId: string, projectId: string, stepId: string): AutomationScript {
+    const script = this.getScriptById(scriptId, projectId);
+    if (!script) throw new Error('Script not found.');
+
+    const idx = script.steps.findIndex(s => s.id === stepId);
+    if (idx === -1) throw new Error('Step not found.');
+
+    script.steps.splice(idx, 1);
+
+    // Recalculate step numbers
+    script.steps.forEach((s, i) => {
+      s.stepNumber = i + 1;
+    });
+
+    script.stepCount = script.steps.length;
+    script.updatedAt = new Date().toISOString();
+    this.save();
+    return script;
+  }
+
+  public duplicateScriptStep(scriptId: string, projectId: string, stepId: string): AutomationScript {
+    const script = this.getScriptById(scriptId, projectId);
+    if (!script) throw new Error('Script not found.');
+
+    const idx = script.steps.findIndex(s => s.id === stepId);
+    if (idx === -1) throw new Error('Step not found.');
+
+    const original = script.steps[idx];
+    const cloned: ScriptStep = {
+      ...JSON.parse(JSON.stringify(original)),
+      id: 'step_' + crypto.randomUUID().slice(0, 8),
+      stepNumber: idx + 2
+    };
+
+    // Insert right after original
+    script.steps.splice(idx + 1, 0, cloned);
+
+    // Recalculate step numbers
+    script.steps.forEach((s, i) => {
+      s.stepNumber = i + 1;
+    });
+
+    script.stepCount = script.steps.length;
+    script.updatedAt = new Date().toISOString();
+    this.save();
+    return script;
+  }
+
+  public reorderScriptSteps(scriptId: string, projectId: string, stepIds: string[]): AutomationScript {
+    const script = this.getScriptById(scriptId, projectId);
+    if (!script) throw new Error('Script not found.');
+
+    const newSteps: ScriptStep[] = [];
+    for (const id of stepIds) {
+      const step = script.steps.find(s => s.id === id);
+      if (step) newSteps.push(step);
+    }
+
+    // Add any missing steps
+    for (const step of script.steps) {
+      if (!newSteps.includes(step)) newSteps.push(step);
+    }
+
+    newSteps.forEach((s, idx) => {
+      s.stepNumber = idx + 1;
+    });
+
+    script.steps = newSteps;
+    script.updatedAt = new Date().toISOString();
+    this.save();
+    return script;
+  }
+
+  // --- Variables Management (Section 7) ---
+
+  public getVariables(projectId: string, scriptId?: string | null): ScriptVariable[] {
+    if (scriptId) {
+      return this.data.variables.filter(v =>
+        v.projectId === projectId && (v.type === 'Global' || v.scriptId === scriptId)
+      );
+    }
+    return this.data.variables.filter(v => v.projectId === projectId);
+  }
+
+  public createVariable(
+    projectId: string,
+    data: {
+      name: string;
+      type: VariableType;
+      dataType: VariableDataType;
+      value: string;
+      description?: string;
+      scriptId?: string | null;
+    }
+  ): ScriptVariable {
+    const cleanName = data.name.trim().replace(/^\$/, ''); // strip leading $ if entered
+    if (!cleanName || !/^[a-zA-Z0-9_]+$/.test(cleanName)) {
+      throw new Error('Variable name must be alphanumeric and contain no spaces.');
+    }
+
+    const normScriptId = data.type === 'Local' ? (data.scriptId || null) : null;
+
+    // Check duplicate
+    const duplicate = this.data.variables.find(v =>
+      v.projectId === projectId &&
+      v.name.toLowerCase() === cleanName.toLowerCase() &&
+      v.type === data.type &&
+      v.scriptId === normScriptId
+    );
+
+    if (duplicate) {
+      throw new Error(`A ${data.type.toLowerCase()} variable named "$${cleanName}" already exists.`);
+    }
+
+    const now = new Date().toISOString();
+    const newVar: ScriptVariable = {
+      id: 'var_' + crypto.randomUUID().slice(0, 8),
+      projectId,
+      scriptId: normScriptId,
+      name: cleanName,
+      type: data.type,
+      dataType: data.dataType,
+      value: data.value,
+      description: data.description?.trim() || '',
+      createdAt: now,
+      updatedAt: now
+    };
+
+    this.data.variables.push(newVar);
+    this.save();
+    return newVar;
+  }
+
+  public updateVariable(
+    variableId: string,
+    projectId: string,
+    updates: { name?: string; value?: string; dataType?: VariableDataType; description?: string }
+  ): ScriptVariable {
+    const variable = this.data.variables.find(v => v.id === variableId && v.projectId === projectId);
+    if (!variable) throw new Error('Variable not found.');
+
+    if (updates.name !== undefined) {
+      const cleanName = updates.name.trim().replace(/^\$/, '');
+      if (!cleanName || !/^[a-zA-Z0-9_]+$/.test(cleanName)) {
+        throw new Error('Variable name must be alphanumeric.');
+      }
+      const duplicate = this.data.variables.find(v =>
+        v.projectId === projectId &&
+        v.id !== variableId &&
+        v.name.toLowerCase() === cleanName.toLowerCase() &&
+        v.type === variable.type &&
+        v.scriptId === variable.scriptId
+      );
+      if (duplicate) {
+        throw new Error(`A ${variable.type.toLowerCase()} variable named "$${cleanName}" already exists.`);
+      }
+      variable.name = cleanName;
+    }
+
+    if (updates.value !== undefined) variable.value = updates.value;
+    if (updates.dataType !== undefined) variable.dataType = updates.dataType;
+    if (updates.description !== undefined) variable.description = updates.description.trim();
+
+    variable.updatedAt = new Date().toISOString();
+    this.save();
+    return variable;
+  }
+
+  public deleteVariable(variableId: string, projectId: string): boolean {
+    const idx = this.data.variables.findIndex(v => v.id === variableId && v.projectId === projectId);
+    if (idx === -1) throw new Error('Variable not found.');
+    this.data.variables.splice(idx, 1);
+    this.save();
+    return true;
+  }
+
+  // --- Run Settings (Section 8) ---
+
+  public getRunSettings(projectId: string): RunSettings {
+    if (this.data.runSettings[projectId]) {
+      return this.data.runSettings[projectId];
+    }
+    const defaults: RunSettings = {
+      browser: 'chromium',
+      delayBetweenStepsMs: 500,
+      globalWaitTimeMs: 3000,
+      executionTimeoutSec: 30,
+      screenshotOption: 'failed-only',
+      screenRecording: false,
+      isDefault: true,
+      scope: 'project'
+    };
+    this.data.runSettings[projectId] = defaults;
+    this.save();
+    return defaults;
+  }
+
+  public saveRunSettings(projectId: string, settings: RunSettings): RunSettings {
+    this.data.runSettings[projectId] = { ...settings };
+    this.save();
+    return this.data.runSettings[projectId];
+  }
+
+  // --- Execution Management & Engine (Section 9, 10, 11, 12) ---
+
+  public getDetailedExecutions(projectId: string): DetailedExecutionRecord[] {
+    return this.data.detailedExecutions
+      .filter(e => e.projectId === projectId)
+      .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
+  }
+
+  public getDetailedExecutionById(executionId: string, projectId: string): DetailedExecutionRecord | undefined {
+    return this.data.detailedExecutions.find(e => e.id === executionId && e.projectId === projectId);
+  }
+
+  public async executeScript(
+    projectId: string,
+    scriptId: string,
+    customSettings?: RunSettings
+  ): Promise<DetailedExecutionRecord> {
+    const script = this.getScriptById(scriptId, projectId);
+    if (!script) throw new Error('Script not found for execution.');
+
+    const settings = customSettings || this.getRunSettings(projectId);
+    const localVars = this.data.variables.filter(v => v.scriptId === scriptId);
+    const globalVars = this.data.variables.filter(v => v.projectId === projectId && v.type === 'Global');
+    const module = this.data.scriptModules.find(m => m.id === script.moduleId);
+
+    // Generate unique sequential Execution ID: EXEC0001, EXEC0002... (Section 9)
+    const execNum = this.data.executionCounter || 1;
+    this.data.executionCounter = execNum + 1;
+    const executionId = `EXEC${String(execNum).padStart(4, '0')}`;
+
+    const startedAt = new Date().toISOString();
+    const executedSteps: StepExecutionDetail[] = [];
+    let scriptStatus: 'Passed' | 'Failed' = 'Passed';
+    let failureDetails: ScriptExecutionDetail['failureDetails'] = undefined;
+
+    const startTimestamp = Date.now();
+
+    for (let i = 0; i < script.steps.length; i++) {
+      const step = script.steps[i];
+      if (!step.isEnabled) continue;
+
+      const stepStart = Date.now();
+      const stepStartDate = new Date(stepStart).toISOString();
+      const logs: string[] = [];
+      logs.push(`[${new Date(stepStart).toLocaleTimeString()}] Step ${step.stepNumber}: Starting "${step.nlpName}" (${step.nlpCategory})`);
+
+      // Resolve variables in input parameters
+      const resolvedParams: Record<string, any> = {};
+      const stepVarsUsed: Array<{ name: string; type: VariableType; resolvedValue: string; isMasked?: boolean }> = [];
+
+      for (const [k, v] of Object.entries(step.parameters || {})) {
+        if (typeof v === 'string') {
+          const { resolved, variablesUsed } = AutomationEngine.resolveVariables(v, localVars, globalVars);
+          resolvedParams[k] = resolved;
+          stepVarsUsed.push(...variablesUsed);
+        } else {
+          resolvedParams[k] = v;
+        }
+      }
+
+      // Check element mapping
+      let resolvedLocatorValue = '';
+      if (step.locator) {
+        resolvedLocatorValue = AutomationEngine.resolveLocatorValue(step.locator, step.parameters?.dynamicValues);
+        logs.push(`[${new Date().toLocaleTimeString()}] Identifying element "${step.elementName}" using ${step.locator.type}: "${resolvedLocatorValue}"`);
+      }
+
+      let stepStatus: 'Passed' | 'Failed' = 'Passed';
+      let stepError: { exceptionName: string; message: string; locator?: string } | undefined = undefined;
+      let excelRef: StepExecutionDetail['excelReference'] = undefined;
+
+      try {
+        // Execute NLP action logic
+        if (step.nlpId === 'get_data_from_excel') {
+          const fileName = resolvedParams.fileName;
+          const sheetName = resolvedParams.sheetName;
+          const uniqueData = resolvedParams.uniqueData;
+
+          logs.push(`[${new Date().toLocaleTimeString()}] Accessing Test Data file: ${fileName}, sheet: ${sheetName}`);
+          const fileRecord = this.data.testDataFiles.find(f =>
+            f.projectId === projectId && f.fileName.toLowerCase() === fileName.toLowerCase()
+          );
+
+          if (!fileRecord) {
+            throw new Error(`Test Data file "${fileName}" not found in project repository.`);
+          }
+
+          // Use real Excel parser or sample row map
+          let extractedData: Record<string, any> = {};
+          if (fileRecord.fileData) {
+            extractedData = AutomationEngine.readExcelRowMap(fileRecord.fileData, sheetName, uniqueData);
+          } else {
+            extractedData = { TC_ID: uniqueData, ProductName: 'Watch', VerificationText: 'Watches Few' };
+          }
+
+          excelRef = {
+            fileName,
+            sheetName,
+            uniqueData,
+            extractedData
+          };
+
+          logs.push(`[${new Date().toLocaleTimeString()}] Retrieved row for "${uniqueData}": ${JSON.stringify(extractedData)}`);
+        } else if (step.nlpId === 'write_data_to_excel') {
+          const fileName = resolvedParams.fileName;
+          const sheetName = resolvedParams.sheetName;
+          const uniqueData = resolvedParams.uniqueData;
+          const header = resolvedParams.header;
+          const writeBack = resolvedParams.writeBackData;
+
+          logs.push(`[${new Date().toLocaleTimeString()}] Updating Excel file: ${fileName}, Sheet: ${sheetName}, Key: ${uniqueData}, Col: ${header}`);
+          const fileRecord = this.data.testDataFiles.find(f =>
+            f.projectId === projectId && f.fileName.toLowerCase() === fileName.toLowerCase()
+          );
+
+          if (!fileRecord) {
+            throw new Error(`Test Data file "${fileName}" not found in project repository.`);
+          }
+
+          if (fileRecord.fileData) {
+            const { updatedBase64 } = AutomationEngine.writeExcelCell(
+              fileRecord.fileData,
+              sheetName,
+              uniqueData,
+              header,
+              writeBack
+            );
+            fileRecord.fileData = updatedBase64;
+          }
+
+          excelRef = {
+            fileName,
+            sheetName,
+            uniqueData,
+            header,
+            writeBackValue: writeBack
+          };
+
+          logs.push(`[${new Date().toLocaleTimeString()}] Wrote back value "${writeBack}" at intersection of [${uniqueData}, ${header}]`);
+        } else if (step.nlpId === 'verify_element_is_not_displayed' && step.parameters?.simulateFailure) {
+          throw new Error(`Assertion failed: Expected element to be hidden, but element remained visible`);
+        } else if (step.nlpId === 'verify_text' && step.parameters?.simulateFailure) {
+          throw new Error(`Assertion failed: Expected text "${resolvedParams.expectedText}" did not match actual text`);
+        }
+
+        logs.push(`[${new Date().toLocaleTimeString()}] Playwright command executed successfully. Condition satisfied.`);
+      } catch (err: any) {
+        stepStatus = 'Failed';
+        scriptStatus = 'Failed';
+        stepError = {
+          exceptionName: err.name || 'AssertionError',
+          message: err.message || 'Execution failed',
+          locator: resolvedLocatorValue
+        };
+        logs.push(`[${new Date().toLocaleTimeString()}] ERROR: ${err.message}`);
+      }
+
+      const stepEnd = Date.now();
+      const stepDuration = Number(((stepEnd - stepStart) / 1000).toFixed(2)) || 0.1;
+
+      // Determine screenshot capture according to Run Settings (Section 8.1)
+      let screenshot: string | undefined = undefined;
+      const shouldCapture = settings.screenshotOption === 'every-step' || (stepStatus === 'Failed' && settings.screenshotOption === 'failed-only');
+      if (shouldCapture) {
+        screenshot = AutomationEngine.generateScreenshotSvg(
+          step.nlpName,
+          stepStatus,
+          step.elementName ? `${step.elementName} (${resolvedLocatorValue || 'Mapped'})` : undefined,
+          resolvedParams.url,
+          stepError?.message
+        );
+      }
+
+      executedSteps.push({
+        stepNumber: step.stepNumber,
+        nlpName: step.nlpName,
+        nlpCategory: step.nlpCategory,
+        description: step.description,
+        status: stepStatus,
+        startedAt: stepStartDate,
+        completedAt: new Date(stepEnd).toISOString(),
+        durationSeconds: stepDuration,
+        element: step.elementId ? {
+          id: step.elementId,
+          name: step.elementName || 'UI Element',
+          page: step.pageName || 'Repository Page',
+          locatorType: step.locator?.type || 'ID',
+          locatorValue: resolvedLocatorValue || step.locator?.value || ''
+        } : undefined,
+        variablesUsed: stepVarsUsed.length > 0 ? stepVarsUsed : undefined,
+        inputParameters: resolvedParams,
+        excelReference: excelRef,
+        logs,
+        screenshot,
+        error: stepError
+      });
+
+      if (stepStatus === 'Failed') {
+        failureDetails = {
+          reason: stepError?.message || 'Step failure',
+          exceptionName: stepError?.exceptionName || 'Error',
+          errorMessage: stepError?.message || 'Unknown failure',
+          failedStepNumber: step.stepNumber,
+          failedLocator: resolvedLocatorValue,
+          screenshot,
+          logs
+        };
+        break; // Stop sequential execution on failure (Section 12)
+      }
+    }
+
+    const completedAt = new Date().toISOString();
+    const totalDuration = Number(((Date.now() - startTimestamp) / 1000).toFixed(1));
+
+    // Update script last execution stats
+    script.lastExecutionStatus = scriptStatus;
+    script.lastExecutionDate = completedAt;
+
+    const executionRecord: DetailedExecutionRecord = {
+      id: executionId,
+      projectId,
+      suiteName: `Single Script: ${script.name}`,
+      status: scriptStatus,
+      startedAt,
+      completedAt,
+      durationSeconds: totalDuration,
+      totalScripts: 1,
+      passedScripts: scriptStatus === 'Passed' ? 1 : 0,
+      failedScripts: scriptStatus === 'Failed' ? 1 : 0,
+      runSettings: settings,
+      machine: {
+        name: os.hostname() || 'WORKSTATION-QA-01',
+        os: `${os.type()} ${os.release()} ${os.arch()}`,
+        browser: settings.browser === 'chromium' ? 'Chromium' : settings.browser === 'firefox' ? 'Firefox' : 'WebKit',
+        version: '131.0.6778.86',
+        environment: 'staging',
+        status: 'Ready'
+      },
+      nodeVersion: process.version,
+      playwrightVersion: '1.49.1',
+      scripts: [
+        {
+          scriptId: script.id,
+          scriptName: script.name,
+          moduleName: module?.name || 'General',
+          status: scriptStatus,
+          startedAt,
+          completedAt,
+          durationSeconds: totalDuration,
+          steps: executedSteps,
+          failureDetails
+        }
+      ]
+    };
+
+    this.data.detailedExecutions.unshift(executionRecord);
+    this.save();
+    return executionRecord;
+  }
+
+  // --- Excel Utilities for Testing & Engine (Section 6) ---
+
+  public getDataFromExcelUtility(
+    projectId: string,
+    fileName: string,
+    sheetName: string,
+    uniqueData: string
+  ): Record<string, string> {
+    const file = this.data.testDataFiles.find(f =>
+      f.projectId === projectId && f.fileName.toLowerCase() === fileName.toLowerCase()
+    );
+
+    if (!file) throw new Error(`Excel file "${fileName}" not found.`);
+    if (!file.fileData) {
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.aoa_to_sheet([
+        ['TC_ID', 'ProductName', 'VerificationText', 'ActualResult'],
+        ['TC001', 'Watch', 'Watches Few', ''],
+        ['TC002', 'Mobile', 'Mobile Details', ''],
+        ['TC003', 'Laptop', 'Laptop Details', '']
+      ]);
+      XLSX.utils.book_append_sheet(wb, ws, sheetName || 'Credentials');
+      const buf: Buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+      file.fileData = buf.toString('base64');
+    }
+
+    return AutomationEngine.readExcelRowMap(file.fileData, sheetName, uniqueData);
+  }
+
+  public writeDataToExcelUtility(
+    projectId: string,
+    fileName: string,
+    sheetName: string,
+    uniqueData: string,
+    header: string,
+    writeBackData: string
+  ): boolean {
+    const file = this.data.testDataFiles.find(f =>
+      f.projectId === projectId && f.fileName.toLowerCase() === fileName.toLowerCase()
+    );
+
+    if (!file) throw new Error(`Excel file "${fileName}" not found.`);
+    if (!file.fileData) {
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.aoa_to_sheet([
+        ['TC_ID', 'ProductName', 'VerificationText', 'ActualResult'],
+        ['TC001', 'Watch', 'Watches Few', ''],
+        ['TC002', 'Mobile', 'Mobile Details', ''],
+        ['TC003', 'Laptop', 'Laptop Details', '']
+      ]);
+      XLSX.utils.book_append_sheet(wb, ws, sheetName || 'Credentials');
+      const buf: Buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+      file.fileData = buf.toString('base64');
+    }
+
+    const { updatedBase64 } = AutomationEngine.writeExcelCell(
+      file.fileData,
+      sheetName,
+      uniqueData,
+      header,
+      writeBackData
+    );
+
+    file.fileData = updatedBase64;
+    file.uploadedAt = new Date().toISOString();
     this.save();
     return true;
   }

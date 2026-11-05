@@ -328,6 +328,242 @@ ipcMain.handle('testData:deleteFile', async (_event, { fileId, projectId }: { fi
   }
 });
 
+// ================= Stage 4 & 5: TestDev IPC Handlers ================= //
+
+// Modules
+ipcMain.handle('scripts:getModules', async (_event, projectId: string) => {
+  try {
+    const modules = db.getScriptModules(projectId);
+    return { success: true, modules };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to get modules' };
+  }
+});
+
+ipcMain.handle('scripts:createModule', async (_event, { projectId, name, parentId }: { projectId: string; name: string; parentId?: string | null }) => {
+  try {
+    const module = db.createScriptModule(projectId, name, parentId);
+    return { success: true, module };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to create module' };
+  }
+});
+
+ipcMain.handle('scripts:updateModule', async (_event, { moduleId, projectId, name }: { moduleId: string; projectId: string; name: string }) => {
+  try {
+    const module = db.updateScriptModule(moduleId, projectId, name);
+    return { success: true, module };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to update module' };
+  }
+});
+
+ipcMain.handle('scripts:deleteModule', async (_event, { moduleId, projectId }: { moduleId: string; projectId: string }) => {
+  try {
+    db.deleteScriptModule(moduleId, projectId);
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to delete module' };
+  }
+});
+
+// Scripts
+ipcMain.handle('scripts:getScripts', async (_event, { projectId, moduleId }: { projectId: string; moduleId?: string }) => {
+  try {
+    const scripts = db.getScripts(projectId, moduleId);
+    return { success: true, scripts };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to get scripts' };
+  }
+});
+
+ipcMain.handle('scripts:getScriptById', async (_event, { scriptId, projectId }: { scriptId: string; projectId: string }) => {
+  try {
+    const script = db.getScriptById(scriptId, projectId);
+    if (!script) return { success: false, error: 'Script not found' };
+    return { success: true, script };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to get script' };
+  }
+});
+
+ipcMain.handle('scripts:createScript', async (_event, { projectId, moduleId, name, createdBy, description }: { projectId: string; moduleId: string; name: string; createdBy: string; description?: string }) => {
+  try {
+    const script = db.createScript(projectId, moduleId, name, createdBy, description);
+    return { success: true, script };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to create script' };
+  }
+});
+
+ipcMain.handle('scripts:updateScript', async (_event, { scriptId, projectId, updates }: { scriptId: string; projectId: string; updates: any }) => {
+  try {
+    const script = db.updateScript(scriptId, projectId, updates);
+    return { success: true, script };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to update script' };
+  }
+});
+
+ipcMain.handle('scripts:deleteScript', async (_event, { scriptId, projectId }: { scriptId: string; projectId: string }) => {
+  try {
+    db.deleteScript(scriptId, projectId);
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to delete script' };
+  }
+});
+
+// Steps
+ipcMain.handle('scripts:addStep', async (_event, { scriptId, projectId, step, insertAfterStepNumber }: { scriptId: string; projectId: string; step: any; insertAfterStepNumber?: number }) => {
+  try {
+    const script = db.addScriptStep(scriptId, projectId, step, insertAfterStepNumber);
+    return { success: true, script };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to add step' };
+  }
+});
+
+ipcMain.handle('scripts:updateStep', async (_event, { scriptId, projectId, stepId, updates }: { scriptId: string; projectId: string; stepId: string; updates: any }) => {
+  try {
+    const script = db.updateScriptStep(scriptId, projectId, stepId, updates);
+    return { success: true, script };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to update step' };
+  }
+});
+
+ipcMain.handle('scripts:deleteStep', async (_event, { scriptId, projectId, stepId }: { scriptId: string; projectId: string; stepId: string }) => {
+  try {
+    const script = db.deleteScriptStep(scriptId, projectId, stepId);
+    return { success: true, script };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to delete step' };
+  }
+});
+
+ipcMain.handle('scripts:duplicateStep', async (_event, { scriptId, projectId, stepId }: { scriptId: string; projectId: string; stepId: string }) => {
+  try {
+    const script = db.duplicateScriptStep(scriptId, projectId, stepId);
+    return { success: true, script };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to duplicate step' };
+  }
+});
+
+ipcMain.handle('scripts:reorderSteps', async (_event, { scriptId, projectId, stepIds }: { scriptId: string; projectId: string; stepIds: string[] }) => {
+  try {
+    const script = db.reorderScriptSteps(scriptId, projectId, stepIds);
+    return { success: true, script };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to reorder steps' };
+  }
+});
+
+// Variables
+ipcMain.handle('scripts:getVariables', async (_event, { projectId, scriptId }: { projectId: string; scriptId?: string | null }) => {
+  try {
+    const variables = db.getVariables(projectId, scriptId);
+    return { success: true, variables };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to get variables' };
+  }
+});
+
+ipcMain.handle('scripts:createVariable', async (_event, { projectId, data }: { projectId: string; data: any }) => {
+  try {
+    const variable = db.createVariable(projectId, data);
+    return { success: true, variable };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to create variable' };
+  }
+});
+
+ipcMain.handle('scripts:updateVariable', async (_event, { variableId, projectId, updates }: { variableId: string; projectId: string; updates: any }) => {
+  try {
+    const variable = db.updateVariable(variableId, projectId, updates);
+    return { success: true, variable };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to update variable' };
+  }
+});
+
+ipcMain.handle('scripts:deleteVariable', async (_event, { variableId, projectId }: { variableId: string; projectId: string }) => {
+  try {
+    db.deleteVariable(variableId, projectId);
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to delete variable' };
+  }
+});
+
+// Run Settings
+ipcMain.handle('scripts:getRunSettings', async (_event, projectId: string) => {
+  try {
+    const settings = db.getRunSettings(projectId);
+    return { success: true, settings };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to get run settings' };
+  }
+});
+
+ipcMain.handle('scripts:saveRunSettings', async (_event, { projectId, settings }: { projectId: string; settings: any }) => {
+  try {
+    const saved = db.saveRunSettings(projectId, settings);
+    return { success: true, settings: saved };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to save run settings' };
+  }
+});
+
+// Execution
+ipcMain.handle('execution:getExecutions', async (_event, projectId: string) => {
+  try {
+    const executions = db.getDetailedExecutions(projectId);
+    return { success: true, executions };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to get executions' };
+  }
+});
+
+ipcMain.handle('execution:getExecutionById', async (_event, { executionId, projectId }: { executionId: string; projectId: string }) => {
+  try {
+    const execution = db.getDetailedExecutionById(executionId, projectId);
+    if (!execution) return { success: false, error: 'Execution not found' };
+    return { success: true, execution };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to get execution' };
+  }
+});
+
+ipcMain.handle('execution:executeScript', async (_event, { projectId, scriptId, customSettings }: { projectId: string; scriptId: string; customSettings?: any }) => {
+  try {
+    const execution = await db.executeScript(projectId, scriptId, customSettings);
+    return { success: true, execution };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to execute script' };
+  }
+});
+
+// Excel Utility
+ipcMain.handle('excel:getData', async (_event, { projectId, fileName, sheetName, uniqueData }: { projectId: string; fileName: string; sheetName: string; uniqueData: string }) => {
+  try {
+    const data = db.getDataFromExcelUtility(projectId, fileName, sheetName, uniqueData);
+    return { success: true, data };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to get data from excel' };
+  }
+});
+
+ipcMain.handle('excel:writeData', async (_event, { projectId, fileName, sheetName, uniqueData, header, writeBackData }: { projectId: string; fileName: string; sheetName: string; uniqueData: string; header: string; writeBackData: string }) => {
+  try {
+    db.writeDataToExcelUtility(projectId, fileName, sheetName, uniqueData, header, writeBackData);
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to write data to excel' };
+  }
+});
+
 // Email simulator handlers
 ipcMain.handle('email:getSimulatedEmails', async (_event, toEmail?: string) => {
   return db.getSimulatedEmails(toEmail);
