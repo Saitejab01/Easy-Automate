@@ -64,7 +64,15 @@ export class AutomationEngine {
           }
         }
 
-        const locatorCode = this.getPlaywrightLocatorCode(step.locator, step.parameters?.dynamicValues);
+        const codeDynValues: Record<string, string> = {};
+        if (step.parameters?.dynamicValues && typeof step.parameters.dynamicValues === 'object') {
+          for (const [dk, dv] of Object.entries(step.parameters.dynamicValues)) {
+            codeDynValues[dk] = typeof dv === 'string'
+              ? this.resolveVariables(dv, localVars, globalVars).resolved
+              : String(dv ?? '');
+          }
+        }
+        const locatorCode = this.getPlaywrightLocatorCode(step.locator, codeDynValues);
 
         switch (step.nlpId) {
           case 'open_browser': {
@@ -264,9 +272,16 @@ export class AutomationEngine {
   private static getPlaywrightLocatorCode(locator: any, dynamicValues?: Record<string, string>): string {
     if (!locator || !locator.value) return `page.locator('body')`;
     let val = locator.value;
-    if (dynamicValues) {
+    if (dynamicValues && Object.keys(dynamicValues).length > 0) {
       for (const [k, v] of Object.entries(dynamicValues)) {
-        val = val.replace(`{${k}}`, v);
+        const cleanKey = k.replace(/^\{|\}$/g, '').trim();
+        val = val.split(`{${cleanKey}}`).join(String(v ?? ''));
+        val = val.split(`{${k}}`).join(String(v ?? ''));
+      }
+      const remainingMatches = val.match(/\{([^}]+)\}/g);
+      if (remainingMatches && Object.keys(dynamicValues).length === 1) {
+        const singleVal = Object.values(dynamicValues)[0];
+        val = val.split(remainingMatches[0]).join(String(singleVal ?? ''));
       }
     }
     const escaped = val.replace(/'/g, "\\'");
@@ -308,9 +323,16 @@ export class AutomationEngine {
   public static getPlaywrightLocator(page: any, locator: any, dynamicValues?: Record<string, string>): any {
     if (!locator || !locator.value) return page.locator('body');
     let val = locator.value;
-    if (dynamicValues) {
+    if (dynamicValues && Object.keys(dynamicValues).length > 0) {
       for (const [k, v] of Object.entries(dynamicValues)) {
-        val = val.replace(`{${k}}`, v);
+        const cleanKey = k.replace(/^\{|\}$/g, '').trim();
+        val = val.split(`{${cleanKey}}`).join(String(v ?? ''));
+        val = val.split(`{${k}}`).join(String(v ?? ''));
+      }
+      const remainingMatches = val.match(/\{([^}]+)\}/g);
+      if (remainingMatches && Object.keys(dynamicValues).length === 1) {
+        const singleVal = Object.values(dynamicValues)[0];
+        val = val.split(remainingMatches[0]).join(String(singleVal ?? ''));
       }
     }
 
@@ -451,10 +473,29 @@ export class AutomationEngine {
         }
       }
 
+      // Resolve dynamic values with runtime variables
+      const resolvedDynamicValues: Record<string, string> = {};
+      if (step.parameters?.dynamicValues && typeof step.parameters.dynamicValues === 'object') {
+        for (const [dk, dv] of Object.entries(step.parameters.dynamicValues)) {
+          if (typeof dv === 'string') {
+            let tempDyn = dv;
+            for (const [ctxK, ctxV] of Object.entries(executionContextVars)) {
+              tempDyn = tempDyn.replace(`$${ctxK}`, String(ctxV)).replace(`\${${ctxK}}`, String(ctxV));
+            }
+            const { resolved, variablesUsed } = this.resolveVariables(tempDyn, localVariables, globalVariables);
+            resolvedDynamicValues[dk] = resolved;
+            stepVarsUsed.push(...variablesUsed);
+          } else {
+            resolvedDynamicValues[dk] = String(dv ?? '');
+          }
+        }
+      }
+      resolvedParams.dynamicValues = resolvedDynamicValues;
+
       // Resolve element locator
       let resolvedLocatorValue = '';
       if (step.locator) {
-        resolvedLocatorValue = this.resolveLocatorValue(step.locator, step.parameters?.dynamicValues);
+        resolvedLocatorValue = this.resolveLocatorValue(step.locator, resolvedDynamicValues);
         logs.push(`[${new Date().toLocaleTimeString()}] Locator resolved [${step.locator.type}]: "${resolvedLocatorValue}" for element "${step.elementName || ''}"`);
       }
 
@@ -534,7 +575,7 @@ export class AutomationEngine {
             }
 
             case 'click_element': {
-              const loc = this.getPlaywrightLocator(page, step.locator, step.parameters?.dynamicValues);
+              const loc = this.getPlaywrightLocator(page, step.locator, resolvedDynamicValues);
               await loc.waitFor({ state: 'visible', timeout: waitTimeMs });
               await loc.click({ timeout: waitTimeMs });
               logs.push(`[${new Date().toLocaleTimeString()}] Clicked element "${step.elementName}"`);
@@ -542,7 +583,7 @@ export class AutomationEngine {
             }
 
             case 'enter_text': {
-              const loc = this.getPlaywrightLocator(page, step.locator, step.parameters?.dynamicValues);
+              const loc = this.getPlaywrightLocator(page, step.locator, resolvedDynamicValues);
               const text = resolvedParams.text !== undefined ? String(resolvedParams.text) : String(resolvedParams.inputData || '');
               if (resolvedParams.clearBeforeEnter || resolvedParams.clearBeforeTyping) {
                 await loc.clear({ timeout: waitTimeMs }).catch(() => {});
@@ -556,35 +597,35 @@ export class AutomationEngine {
             }
 
             case 'clear_text': {
-              const loc = this.getPlaywrightLocator(page, step.locator, step.parameters?.dynamicValues);
+              const loc = this.getPlaywrightLocator(page, step.locator, resolvedDynamicValues);
               await loc.clear({ timeout: waitTimeMs });
               logs.push(`[${new Date().toLocaleTimeString()}] Cleared text in element "${step.elementName}"`);
               break;
             }
 
             case 'mouse_hover': {
-              const loc = this.getPlaywrightLocator(page, step.locator, step.parameters?.dynamicValues);
+              const loc = this.getPlaywrightLocator(page, step.locator, resolvedDynamicValues);
               await loc.hover({ timeout: waitTimeMs });
               logs.push(`[${new Date().toLocaleTimeString()}] Hovered over element "${step.elementName}"`);
               break;
             }
 
             case 'double_click': {
-              const loc = this.getPlaywrightLocator(page, step.locator, step.parameters?.dynamicValues);
+              const loc = this.getPlaywrightLocator(page, step.locator, resolvedDynamicValues);
               await loc.dblclick({ timeout: waitTimeMs });
               logs.push(`[${new Date().toLocaleTimeString()}] Double-clicked element "${step.elementName}"`);
               break;
             }
 
             case 'right_click': {
-              const loc = this.getPlaywrightLocator(page, step.locator, step.parameters?.dynamicValues);
+              const loc = this.getPlaywrightLocator(page, step.locator, resolvedDynamicValues);
               await loc.click({ button: 'right', timeout: waitTimeMs });
               logs.push(`[${new Date().toLocaleTimeString()}] Right-clicked element "${step.elementName}"`);
               break;
             }
 
             case 'select_option_by_text': {
-              const loc = this.getPlaywrightLocator(page, step.locator, step.parameters?.dynamicValues);
+              const loc = this.getPlaywrightLocator(page, step.locator, resolvedDynamicValues);
               const opt = resolvedParams.optionText || resolvedParams.text || '';
               await loc.selectOption({ label: opt });
               logs.push(`[${new Date().toLocaleTimeString()}] Selected option "${opt}"`);
@@ -592,7 +633,7 @@ export class AutomationEngine {
             }
 
             case 'select_option_by_value': {
-              const loc = this.getPlaywrightLocator(page, step.locator, step.parameters?.dynamicValues);
+              const loc = this.getPlaywrightLocator(page, step.locator, resolvedDynamicValues);
               const val = resolvedParams.optionValue || resolvedParams.value || '';
               await loc.selectOption({ value: val });
               logs.push(`[${new Date().toLocaleTimeString()}] Selected option with value "${val}"`);
@@ -600,14 +641,14 @@ export class AutomationEngine {
             }
 
             case 'check_checkbox': {
-              const loc = this.getPlaywrightLocator(page, step.locator, step.parameters?.dynamicValues);
+              const loc = this.getPlaywrightLocator(page, step.locator, resolvedDynamicValues);
               await loc.check({ timeout: waitTimeMs });
               logs.push(`[${new Date().toLocaleTimeString()}] Checked checkbox "${step.elementName}"`);
               break;
             }
 
             case 'uncheck_checkbox': {
-              const loc = this.getPlaywrightLocator(page, step.locator, step.parameters?.dynamicValues);
+              const loc = this.getPlaywrightLocator(page, step.locator, resolvedDynamicValues);
               await loc.uncheck({ timeout: waitTimeMs });
               logs.push(`[${new Date().toLocaleTimeString()}] Unchecked checkbox "${step.elementName}"`);
               break;
@@ -621,21 +662,21 @@ export class AutomationEngine {
             }
 
             case 'verify_element_is_displayed': {
-              const loc = this.getPlaywrightLocator(page, step.locator, step.parameters?.dynamicValues);
+              const loc = this.getPlaywrightLocator(page, step.locator, resolvedDynamicValues);
               await loc.waitFor({ state: 'visible', timeout: waitTimeMs });
               logs.push(`[${new Date().toLocaleTimeString()}] Verified element "${step.elementName}" is visible`);
               break;
             }
 
             case 'verify_element_is_not_displayed': {
-              const loc = this.getPlaywrightLocator(page, step.locator, step.parameters?.dynamicValues);
+              const loc = this.getPlaywrightLocator(page, step.locator, resolvedDynamicValues);
               await loc.waitFor({ state: 'hidden', timeout: waitTimeMs });
               logs.push(`[${new Date().toLocaleTimeString()}] Verified element "${step.elementName}" is hidden`);
               break;
             }
 
             case 'verify_text': {
-              const loc = this.getPlaywrightLocator(page, step.locator, step.parameters?.dynamicValues);
+              const loc = this.getPlaywrightLocator(page, step.locator, resolvedDynamicValues);
               const actual = await loc.innerText();
               const expected = resolvedParams.expectedText || '';
               if (!actual.toLowerCase().includes(expected.toLowerCase())) {
@@ -673,7 +714,7 @@ export class AutomationEngine {
             }
 
             case 'scroll_to_element': {
-              const loc = this.getPlaywrightLocator(page, step.locator, step.parameters?.dynamicValues);
+              const loc = this.getPlaywrightLocator(page, step.locator, resolvedDynamicValues);
               await loc.scrollIntoViewIfNeeded();
               logs.push(`[${new Date().toLocaleTimeString()}] Scrolled element "${step.elementName}" into view`);
               break;
@@ -1017,9 +1058,16 @@ export class AutomationEngine {
   ): string {
     if (!locator || !locator.value) return '';
     let val = locator.value;
-    if (locator.valueType === 'Dynamic' && dynamicValues) {
+    if (dynamicValues && Object.keys(dynamicValues).length > 0) {
       for (const [k, v] of Object.entries(dynamicValues)) {
-        val = val.replace(`{${k}}`, v);
+        const cleanKey = k.replace(/^\{|\}$/g, '').trim();
+        val = val.split(`{${cleanKey}}`).join(String(v ?? ''));
+        val = val.split(`{${k}}`).join(String(v ?? ''));
+      }
+      const remainingMatches = val.match(/\{([^}]+)\}/g);
+      if (remainingMatches && Object.keys(dynamicValues).length === 1) {
+        const singleVal = Object.values(dynamicValues)[0];
+        val = val.split(remainingMatches[0]).join(String(singleVal ?? ''));
       }
     }
     return val;

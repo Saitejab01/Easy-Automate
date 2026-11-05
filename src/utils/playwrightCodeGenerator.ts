@@ -48,7 +48,15 @@ export function generatePlaywrightCode(
         }
       }
 
-      const locatorCode = getPlaywrightLocatorCode(step.locator, step.parameters?.dynamicValues);
+      const codeDynValues: Record<string, string> = {};
+      if (step.parameters?.dynamicValues && typeof step.parameters.dynamicValues === 'object') {
+        for (const [dk, dv] of Object.entries(step.parameters.dynamicValues)) {
+          codeDynValues[dk] = typeof dv === 'string'
+            ? resolveVariables(dv, localVars, globalVars)
+            : String(dv ?? '');
+        }
+      }
+      const locatorCode = getPlaywrightLocatorCode(step.locator, codeDynValues);
 
       switch (step.nlpId) {
         case 'open_browser': {
@@ -256,9 +264,16 @@ function resolveVariables(text: string, localVars: any[] = [], globalVars: any[]
 function getPlaywrightLocatorCode(locator: any, dynamicValues?: Record<string, string>): string {
   if (!locator || !locator.value) return `page.locator('body')`;
   let val = locator.value;
-  if (dynamicValues) {
+  if (dynamicValues && Object.keys(dynamicValues).length > 0) {
     for (const [k, v] of Object.entries(dynamicValues)) {
-      val = val.replace(`{${k}}`, v);
+      const cleanKey = k.replace(/^\{|\}$/g, '').trim();
+      val = val.split(`{${cleanKey}}`).join(String(v ?? ''));
+      val = val.split(`{${k}}`).join(String(v ?? ''));
+    }
+    const remainingMatches = val.match(/\{([^}]+)\}/g);
+    if (remainingMatches && Object.keys(dynamicValues).length === 1) {
+      const singleVal = Object.values(dynamicValues)[0];
+      val = val.split(remainingMatches[0]).join(String(singleVal ?? ''));
     }
   }
   const escaped = val.replace(/'/g, "\\'");

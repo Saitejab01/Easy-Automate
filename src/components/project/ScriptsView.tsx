@@ -54,6 +54,49 @@ import {
 import { NLP_CATALOG, NLP_CATEGORIES } from '../../api/nlpCatalog';
 import { useAuth } from '../../context/AuthContext';
 
+export const extractDynamicPlaceholders = (locator?: { value?: string; valueType?: string }): string[] => {
+  if (!locator || !locator.value) return [];
+  const matches = locator.value.match(/\{([^}]+)\}/g);
+  if (matches && matches.length > 0) {
+    const set = new Set<string>();
+    matches.forEach(m => {
+      const cleaned = m.slice(1, -1).trim();
+      if (cleaned) set.add(cleaned);
+    });
+    return Array.from(set);
+  }
+  if (locator.valueType === 'Dynamic') {
+    return ['dynamicValue'];
+  }
+  return [];
+};
+
+export const getResolvedLocatorPreview = (
+  locator?: { value?: string; valueType?: string },
+  dynamicValues?: Record<string, string>
+): string => {
+  if (!locator || !locator.value) return '';
+  let preview = locator.value;
+  if (!dynamicValues || Object.keys(dynamicValues).length === 0) return preview;
+
+  for (const [k, v] of Object.entries(dynamicValues)) {
+    const cleanK = k.replace(/^\{|\}$/g, '').trim();
+    const replacement = v !== undefined && v !== '' ? v : `{${cleanK}}`;
+    preview = preview.split(`{${cleanK}}`).join(replacement);
+    preview = preview.split(`{${k}}`).join(replacement);
+  }
+
+  const remainingMatches = preview.match(/\{([^}]+)\}/g);
+  if (remainingMatches && Object.keys(dynamicValues).length === 1) {
+    const singleVal = Object.values(dynamicValues)[0];
+    if (singleVal) {
+      preview = preview.split(remainingMatches[0]).join(singleVal);
+    }
+  }
+
+  return preview;
+};
+
 interface ScriptsViewProps {
   project: Project;
   onNavigateToExecution: (executionId?: string) => void;
@@ -496,19 +539,75 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
   const handleInlineUrlChange = (stepId: string, url: string) => handleInlineParamChange(stepId, 'url', url);
   const handleSaveInlineUrl = handleSaveInlineParam;
 
+  const handleDynamicValueChange = (stepId: string, placeholderKey: string, val: string) => {
+    setActiveScript(prev => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        steps: prev.steps.map(s => {
+          if (s.id === stepId) {
+            const currentDyn = { ...(s.parameters?.dynamicValues || {}) };
+            currentDyn[placeholderKey] = val;
+            return {
+              ...s,
+              parameters: { ...(s.parameters || {}), dynamicValues: currentDyn }
+            };
+          }
+          return s;
+        })
+      };
+    });
+  };
+
+  const handleSaveDynamicValue = async (stepId: string, placeholderKey?: string, val?: string) => {
+    if (!activeScript) return;
+    const targetStep = activeScript.steps.find(s => s.id === stepId);
+    if (!targetStep) return;
+    try {
+      const currentDyn = { ...(targetStep.parameters?.dynamicValues || {}) };
+      if (placeholderKey !== undefined && val !== undefined) {
+        currentDyn[placeholderKey] = val;
+      }
+      const updatedParams = {
+        ...(targetStep.parameters || {}),
+        dynamicValues: currentDyn
+      };
+      await api.scripts.updateStep(activeScript.id, project.id, stepId, {
+        parameters: updatedParams
+      });
+    } catch (err: any) {
+      console.warn('Failed to auto-save dynamic value:', err);
+    }
+  };
+
   // --- Repository Element Mapping (Section 5) ---
   const handleMapElementToStep = async (element: RepositoryElement) => {
     if (!activeScript || !elementPickerStepId) return;
 
     const page = repoPages.find(p => p.id === element.pageId);
     const primaryLoc = element.locators.find(l => l.isPrimary) || element.locators[0];
+    const targetStep = activeScript.steps.find(s => s.id === elementPickerStepId);
+
+    const placeholders = extractDynamicPlaceholders(primaryLoc);
+    const updatedDynValues: Record<string, string> = { ...(targetStep?.parameters?.dynamicValues || {}) };
+    placeholders.forEach(ph => {
+      if (updatedDynValues[ph] === undefined) {
+        updatedDynValues[ph] = '';
+      }
+    });
+
+    const updatedParams = {
+      ...(targetStep?.parameters || {}),
+      ...(placeholders.length > 0 ? { dynamicValues: updatedDynValues } : {})
+    };
 
     try {
       const res = await api.scripts.updateStep(activeScript.id, project.id, elementPickerStepId, {
         elementId: element.id,
         elementName: element.name,
         pageName: page?.name || 'Repository Page',
-        locator: primaryLoc
+        locator: primaryLoc,
+        parameters: updatedParams
       });
 
       if (res.success && res.script) {
@@ -516,7 +615,11 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
         setScripts(prev => prev.map(s => (s.id === res.script.id ? res.script : s)));
         setIsElementPickerOpen(false);
         setElementPickerStepId(null);
-        showSuccessBanner(`Mapped element "${element.name}" to step.`);
+        if (placeholders.length > 0) {
+          showSuccessBanner(`Dynamic element "${element.name}" mapped! Please enter the dynamic value below.`);
+        } else {
+          showSuccessBanner(`Mapped element "${element.name}" to step.`);
+        }
       }
     } catch (err: any) {
       alert(err.message || 'Failed to map element.');
@@ -1311,6 +1414,11 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
                               <span className="text-purple-300 font-semibold">{step.elementName}</span>
                               <span className="text-slate-600">|</span>
                               <span className="text-slate-400 truncate max-w-xs">{step.locator?.value || 'Mapped'}</span>
+                              {step.locator && (step.locator.valueType === 'Dynamic' || /\{[^}]+\}/.test(step.locator.value || '')) && (
+                                <span className="text-[9px] font-semibold text-purple-400 bg-purple-500/15 border border-purple-500/40 px-1.5 py-0.5 rounded-full uppercase tracking-wider">
+                                  Dynamic
+                                </span>
+                              )}
                               <button
                                 type="button"
                                 onClick={() => {
@@ -1339,6 +1447,84 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
                               </button>
                             )
                           )}
+
+                          {/* Dynamic Locator Inputs (When Dynamic Element is mapped) */}
+                          {stepHasElement && (() => {
+                            const placeholders = extractDynamicPlaceholders(step.locator);
+                            if (placeholders.length === 0) return null;
+
+                            return (
+                              <div className="space-y-2 pt-2">
+                                {placeholders.map(ph => {
+                                  const inputId = `step_${step.id}_dyn_${ph}`;
+                                  const rawValue = step.parameters?.dynamicValues?.[ph] || '';
+                                  const preview = getResolvedLocatorPreview(step.locator, step.parameters?.dynamicValues);
+
+                                  return (
+                                    <div
+                                      key={ph}
+                                      className="p-3 rounded-xl bg-purple-950/20 border border-purple-500/30 max-w-2xl space-y-2 shadow-sm"
+                                    >
+                                      <div className="flex items-center justify-between gap-2">
+                                        <label className="text-[11px] font-semibold text-purple-300 flex items-center gap-1.5">
+                                          <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse"></span>
+                                          <span>Dynamic Value for</span>
+                                          <code className="text-purple-200 bg-purple-900/50 px-1.5 py-0.5 rounded font-mono border border-purple-500/30">
+                                            {`{${ph}}`}
+                                          </code>
+                                        </label>
+                                        {!rawValue ? (
+                                          <span className="text-[10px] font-medium text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 whitespace-nowrap">
+                                            Value Required
+                                          </span>
+                                        ) : (
+                                          <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                                            Ready
+                                          </span>
+                                        )}
+                                      </div>
+
+                                      <div className="flex items-center gap-2">
+                                        <div className="relative flex-1">
+                                          <input
+                                            type="text"
+                                            placeholder={`Value to replace {${ph}} (or type $ for variables)`}
+                                            value={rawValue}
+                                            onChange={(e) =>
+                                              handleInputWithVarSuggestions(
+                                                inputId,
+                                                e.target.value,
+                                                (newV) => {
+                                                  handleDynamicValueChange(step.id, ph, newV);
+                                                  handleSaveDynamicValue(step.id, ph, newV);
+                                                }
+                                              )
+                                            }
+                                            onBlur={() => {
+                                              setTimeout(() => {
+                                                setVarAutoComplete(prev => prev?.inputId === inputId ? null : prev);
+                                              }, 200);
+                                              handleSaveDynamicValue(step.id, ph, step.parameters?.dynamicValues?.[ph] || '');
+                                            }}
+                                            className="w-full px-3 py-1.5 text-xs bg-slate-950 border border-purple-500/40 rounded-lg text-purple-200 placeholder:text-slate-600 focus:outline-none focus:border-purple-400 font-mono shadow-inner"
+                                          />
+                                          {renderVariableDropdown(inputId)}
+                                        </div>
+                                      </div>
+
+                                      {/* Live Preview of Resolved Locator */}
+                                      <div className="flex items-center gap-2 text-[11px] font-mono bg-slate-950/80 px-2.5 py-1 rounded-lg border border-slate-800/80 text-slate-400">
+                                        <span className="text-slate-500 shrink-0 text-[10px] uppercase font-sans font-bold">Resolved:</span>
+                                        <span className="text-purple-300 truncate" title={preview}>
+                                          {preview}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            );
+                          })()}
 
                           {/* Inline URL Input for Navigate To URL */}
                           {step.nlpId === 'navigate_to_url' && (
@@ -1448,6 +1634,7 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
                                 if (step.nlpId === 'navigate_to_url' && k === 'url') return null;
                                 if (step.nlpId === 'enter_text' && (k === 'text' || k === 'inputData')) return null;
                                 if (step.nlpId === 'verify_text' && k === 'expectedText') return null;
+                                if (k === 'dynamicValues') return null;
                                 if (v === undefined || v === '') return null;
                                 const isVariable = typeof v === 'string' && v.startsWith('$');
 
@@ -1718,6 +1905,12 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
                                   {el.name}
                                 </span>
                                 <span className="text-[10px] text-slate-500 font-mono">({el.type})</span>
+                                {prim && (prim.valueType === 'Dynamic' || /\{[^}]+\}/.test(prim.value || '')) && (
+                                  <span className="text-[9px] font-semibold text-purple-400 bg-purple-500/10 border border-purple-500/30 px-1.5 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-purple-400"></span>
+                                    Dynamic
+                                  </span>
+                                )}
                               </div>
                               <p className="text-[11px] text-slate-400 font-mono mt-0.5 truncate max-w-md">
                                 {prim?.type}: {prim?.value}
@@ -2128,6 +2321,7 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
 
               // Any other keys already present in editingStep.parameters
               Object.entries(editingStep.parameters || {}).forEach(([k, v]) => {
+                if (k === 'dynamicValues') return;
                 if (!seenKeys.has(k)) {
                   allParamsToEdit.push({
                     name: k,
@@ -2142,74 +2336,141 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
 
               return (
                 <div className="p-6 space-y-4 text-xs">
-                  {allParamsToEdit.length === 0 ? (
+                  {/* Dynamic Locator Parameters Section */}
+                  {editingStep.locator && (() => {
+                    const placeholders = extractDynamicPlaceholders(editingStep.locator);
+                    if (placeholders.length === 0) return null;
+
+                    return (
+                      <div className="p-4 rounded-2xl bg-purple-950/20 border border-purple-500/30 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-purple-300 flex items-center gap-1.5">
+                            <MousePointer className="w-3.5 h-3.5 text-purple-400" />
+                            Dynamic Locator Parameters
+                          </span>
+                          <span className="text-[10px] font-semibold text-purple-400 bg-purple-500/10 px-2 py-0.5 rounded-full border border-purple-500/20 uppercase tracking-wider">
+                            Dynamic Element
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-400">
+                          Template: <code className="text-purple-300 font-mono">{editingStep.locator.value}</code>
+                        </p>
+
+                        {placeholders.map(ph => {
+                          const val = editingStep.parameters?.dynamicValues?.[ph] || '';
+                          const inputId = `drawer_dyn_${ph}`;
+                          return (
+                            <div key={ph} className="space-y-1">
+                              <label className="text-[11px] font-semibold text-slate-300 flex items-center justify-between">
+                                <span>Value for <code className="text-purple-400 font-mono">{`{${ph}}`}</code>:</span>
+                                <span className="text-[10px] text-slate-500">Supports $variables</span>
+                              </label>
+                              <div className="relative">
+                                <input
+                                  type="text"
+                                  placeholder={`Enter value to replace {${ph}} or $variable`}
+                                  value={val}
+                                  onChange={(e) =>
+                                    handleInputWithVarSuggestions(
+                                      inputId,
+                                      e.target.value,
+                                      (newV) => {
+                                        setEditingStep(prev => {
+                                          if (!prev) return null;
+                                          const dyn = { ...(prev.parameters?.dynamicValues || {}) };
+                                          dyn[ph] = newV;
+                                          return {
+                                            ...prev,
+                                            parameters: { ...(prev.parameters || {}), dynamicValues: dyn }
+                                          };
+                                        });
+                                      }
+                                    )
+                                  }
+                                  onBlur={() => {
+                                    setTimeout(() => {
+                                      setVarAutoComplete(prev => prev?.inputId === inputId ? null : prev);
+                                    }, 200);
+                                  }}
+                                  className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-purple-500/40 text-xs text-purple-200 focus:border-purple-400 font-mono"
+                                />
+                                {renderVariableDropdown(inputId)}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+
+                  {allParamsToEdit.length === 0 && (!editingStep.locator || extractDynamicPlaceholders(editingStep.locator).length === 0) && (
                     <div className="py-6 text-center text-slate-400">
                       <p>This action does not require any additional parameters.</p>
                     </div>
-                  ) : (
-                    allParamsToEdit.map(param => (
-                      <div key={param.name} className="relative">
-                        <div className="flex items-center justify-between mb-1">
-                          <label className="text-slate-300 font-semibold flex items-center gap-1">
-                            <span>{param.label}</span>
-                            {param.required && <span className="text-rose-400 font-bold" title="Required">*</span>}
-                          </label>
-                          <span className="text-[10px] text-slate-500 font-mono">
-                            {param.name}
-                          </span>
-                        </div>
-                        {param.description && (
-                          <p className="text-[11px] text-slate-400 mb-1.5">{param.description}</p>
-                        )}
+                  )}
 
-                        {param.type === 'dropdown' && param.options && param.options.length > 0 ? (
-                          <select
+                  {allParamsToEdit.map(param => (
+                    <div key={param.name} className="relative">
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-slate-300 font-semibold flex items-center gap-1">
+                          <span>{param.label}</span>
+                          {param.required && <span className="text-rose-400 font-bold" title="Required">*</span>}
+                        </label>
+                        <span className="text-[10px] text-slate-500 font-mono">
+                          {param.name}
+                        </span>
+                      </div>
+                      {param.description && (
+                        <p className="text-[11px] text-slate-400 mb-1.5">{param.description}</p>
+                      )}
+
+                      {param.type === 'dropdown' && param.options && param.options.length > 0 ? (
+                        <select
+                          value={String(editingStep.parameters?.[param.name] ?? param.currentValue)}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setEditingStep(prev => prev ? {
+                              ...prev,
+                              parameters: { ...prev.parameters, [param.name]: val }
+                            } : null);
+                          }}
+                          className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:border-brand-500 font-mono"
+                        >
+                          {param.options.map(opt => (
+                            <option key={opt} value={opt}>{opt}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <div className="relative">
+                          <input
+                            type={param.type === 'number' ? 'number' : 'text'}
+                            placeholder={param.placeholder}
                             value={String(editingStep.parameters?.[param.name] ?? param.currentValue)}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              setEditingStep(prev => prev ? {
-                                ...prev,
-                                parameters: { ...prev.parameters, [param.name]: val }
-                              } : null);
+                            onChange={(e) =>
+                              handleInputWithVarSuggestions(
+                                `drawer_${param.name}`,
+                                e.target.value,
+                                (newV) => {
+                                  setEditingStep(prev => prev ? {
+                                    ...prev,
+                                    parameters: { ...prev.parameters, [param.name]: newV }
+                                  } : null);
+                                }
+                              )
+                            }
+                            onBlur={() => {
+                              setTimeout(() => {
+                                setVarAutoComplete(prev => prev?.inputId === `drawer_${param.name}` ? null : prev);
+                              }, 200);
                             }}
                             className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:border-brand-500 font-mono"
-                          >
-                            {param.options.map(opt => (
-                              <option key={opt} value={opt}>{opt}</option>
-                            ))}
-                          </select>
-                        ) : (
-                          <div className="relative">
-                            <input
-                              type={param.type === 'number' ? 'number' : 'text'}
-                              placeholder={param.placeholder}
-                              value={String(editingStep.parameters?.[param.name] ?? param.currentValue)}
-                              onChange={(e) =>
-                                handleInputWithVarSuggestions(
-                                  `drawer_${param.name}`,
-                                  e.target.value,
-                                  (newV) => {
-                                    setEditingStep(prev => prev ? {
-                                      ...prev,
-                                      parameters: { ...prev.parameters, [param.name]: newV }
-                                    } : null);
-                                  }
-                                )
-                              }
-                              onBlur={() => {
-                                setTimeout(() => {
-                                  setVarAutoComplete(prev => prev?.inputId === `drawer_${param.name}` ? null : prev);
-                                }, 200);
-                              }}
-                              className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:border-brand-500 font-mono"
-                              autoFocus={param.required && !editingStep.parameters?.[param.name]}
-                            />
-                            {renderVariableDropdown(`drawer_${param.name}`)}
-                          </div>
-                        )}
-                      </div>
-                    ))
-                  )}
+                            autoFocus={param.required && !editingStep.parameters?.[param.name]}
+                          />
+                          {renderVariableDropdown(`drawer_${param.name}`)}
+                        </div>
+                      )}
+                    </div>
+                  ))}
 
                   <div className="pt-2">
                     <button
