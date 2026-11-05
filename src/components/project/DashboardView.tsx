@@ -420,3 +420,4 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ project, onNavigat
     </div>
   );
 };
+

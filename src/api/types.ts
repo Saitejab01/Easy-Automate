@@ -52,7 +52,7 @@ export interface ProjectsResponse {
   error?: string;
 }
 
-// ================= Stage 2 Types ================= //
+// ================= Stage 2 Types: Repository & Dashboard ================= //
 
 export type ElementType =
   | 'Button'
@@ -148,4 +148,47 @@ export interface ProjectStats {
   passRate: number;
   recentExecutions: ExecutionRecord[];
   activeMachine: MachineDetails;
+}
+
+// ================= Stage 3 Types: Test Data Management ================= //
+
+export type ExcelFormat = '.xlsx' | '.xls';
+
+export interface TestDataFolder {
+  id: string;
+  projectId: string;
+  name: string;
+  parentId: string | null; // null for root level folders
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TestDataFile {
+  id: string;
+  projectId: string;
+  folderId: string | null; // null for root level files
+  fileName: string;
+  fileFormat: ExcelFormat;
+  fileSizeBytes: number;
+  fileSizeFormatted: string;
+  uploadedBy: string;
+  uploadedAt: string;
+  fileData?: string; // base64 payload for download / persistence
+  sheetNames?: string[];
+  rowCount?: number;
+  description?: string;
+}
+
+export interface TestDataFoldersResponse {
+  success: boolean;
+  folders?: TestDataFolder[];
+  folder?: TestDataFolder;
+  error?: string;
+}
+
+export interface TestDataFilesResponse {
+  success: boolean;
+  files?: TestDataFile[];
+  file?: TestDataFile;
+  error?: string;
 }

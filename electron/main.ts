@@ -244,6 +244,90 @@ ipcMain.handle('dashboard:getStats', async (_event, projectId: string) => {
   }
 });
 
+// ================= Stage 3: Test Data Management IPC Handlers ================= //
+
+ipcMain.handle('testData:getFolders', async (_event, projectId: string) => {
+  try {
+    const folders = db.getTestDataFolders(projectId);
+    return { success: true, folders };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to get test data folders' };
+  }
+});
+
+ipcMain.handle('testData:createFolder', async (_event, { projectId, name, parentId }: { projectId: string; name: string; parentId?: string | null }) => {
+  try {
+    const folder = db.createTestDataFolder(projectId, name, parentId);
+    return { success: true, folder };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to create test data folder' };
+  }
+});
+
+ipcMain.handle('testData:updateFolder', async (_event, { folderId, projectId, name }: { folderId: string; projectId: string; name: string }) => {
+  try {
+    const folder = db.updateTestDataFolder(folderId, projectId, name);
+    return { success: true, folder };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to update test data folder' };
+  }
+});
+
+ipcMain.handle('testData:deleteFolder', async (_event, { folderId, projectId }: { folderId: string; projectId: string }) => {
+  try {
+    db.deleteTestDataFolder(folderId, projectId);
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to delete test data folder' };
+  }
+});
+
+ipcMain.handle('testData:getFiles', async (_event, { projectId, folderId }: { projectId: string; folderId?: string | null }) => {
+  try {
+    const files = db.getTestDataFiles(projectId, folderId);
+    return { success: true, files };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to get test data files' };
+  }
+});
+
+ipcMain.handle('testData:getFileById', async (_event, { fileId, projectId }: { fileId: string; projectId: string }) => {
+  try {
+    const file = db.getTestDataFileById(fileId, projectId);
+    if (!file) return { success: false, error: 'File not found' };
+    return { success: true, file };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to get file' };
+  }
+});
+
+ipcMain.handle('testData:uploadFile', async (_event, { projectId, folderId, file }: { projectId: string; folderId: string | null; file: any }) => {
+  try {
+    const uploaded = db.uploadTestDataFile(projectId, folderId, file);
+    return { success: true, file: uploaded };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to upload file' };
+  }
+});
+
+ipcMain.handle('testData:updateFile', async (_event, { fileId, projectId, updates }: { fileId: string; projectId: string; updates: any }) => {
+  try {
+    const updated = db.updateTestDataFile(fileId, projectId, updates);
+    return { success: true, file: updated };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to update file' };
+  }
+});
+
+ipcMain.handle('testData:deleteFile', async (_event, { fileId, projectId }: { fileId: string; projectId: string }) => {
+  try {
+    db.deleteTestDataFile(fileId, projectId);
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to delete file' };
+  }
+});
+
 // Email simulator handlers
 ipcMain.handle('email:getSimulatedEmails', async (_event, toEmail?: string) => {
   return db.getSimulatedEmails(toEmail);

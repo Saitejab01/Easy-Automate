@@ -36,6 +36,26 @@ export const electronAPI = {
     deleteElement: (elementId: string, projectId: string) =>
       ipcRenderer.invoke('repository:deleteElement', { elementId, projectId }),
   },
+  testData: {
+    getFolders: (projectId: string) => ipcRenderer.invoke('testData:getFolders', projectId),
+    createFolder: (projectId: string, name: string, parentId?: string | null) =>
+      ipcRenderer.invoke('testData:createFolder', { projectId, name, parentId }),
+    updateFolder: (folderId: string, projectId: string, name: string) =>
+      ipcRenderer.invoke('testData:updateFolder', { folderId, projectId, name }),
+    deleteFolder: (folderId: string, projectId: string) =>
+      ipcRenderer.invoke('testData:deleteFolder', { folderId, projectId }),
+
+    getFiles: (projectId: string, folderId?: string | null) =>
+      ipcRenderer.invoke('testData:getFiles', { projectId, folderId }),
+    getFileById: (fileId: string, projectId: string) =>
+      ipcRenderer.invoke('testData:getFileById', { fileId, projectId }),
+    uploadFile: (projectId: string, folderId: string | null, file: any) =>
+      ipcRenderer.invoke('testData:uploadFile', { projectId, folderId, file }),
+    updateFile: (fileId: string, projectId: string, updates: any) =>
+      ipcRenderer.invoke('testData:updateFile', { fileId, projectId, updates }),
+    deleteFile: (fileId: string, projectId: string) =>
+      ipcRenderer.invoke('testData:deleteFile', { fileId, projectId }),
+  },
   dashboard: {
     getStats: (projectId: string) => ipcRenderer.invoke('dashboard:getStats', projectId),
   },

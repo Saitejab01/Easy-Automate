@@ -27,6 +27,7 @@ import { Project } from '../api/types';
 import { useAuth } from '../context/AuthContext';
 import { DashboardView } from '../components/project/DashboardView';
 import { RepositoryView } from '../components/project/RepositoryView';
+import { TestDataView } from '../components/project/TestDataView';
 import { PlaceholderView } from '../components/project/PlaceholderView';
 
 type WorkspaceSection = 'dashboard' | 'repository' | 'test-data' | 'scripts' | 'execution' | 'suites' | 'settings';
@@ -200,22 +201,17 @@ export const IndividualProjectPage: React.FC = () => {
               <span>Repository</span>
             </button>
 
-            {/* 3. Test Data (Placeholder) */}
+            {/* 3. Test Data */}
             <button
               onClick={() => setActiveSection('test-data')}
-              className={`w-full flex items-center justify-between px-3 py-2 rounded-xl transition-all ${
+              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl transition-all ${
                 activeSection === 'test-data'
-                  ? 'bg-slate-800 text-brand-300 font-semibold'
+                  ? 'bg-brand-600 text-white font-semibold shadow-md shadow-brand-600/30'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
               }`}
             >
-              <div className="flex items-center gap-2.5">
-                <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
-                <span>Test Data</span>
-              </div>
-              <span className="text-[9px] bg-slate-900 text-slate-400 border border-slate-800 px-1.5 py-0.2 rounded font-mono">
-                Stage 3
-              </span>
+              <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
+              <span>Test Data</span>
             </button>
 
             {/* 4. TestDev (Collapsible Section) */}
@@ -247,7 +243,7 @@ export const IndividualProjectPage: React.FC = () => {
                       <FileCode className="w-3.5 h-3.5 text-brand-400" />
                       <span>Scripts</span>
                     </div>
-                    <span className="text-[9px] text-slate-500 font-mono">Stage 3</span>
+                    <span className="text-[9px] text-slate-500 font-mono">Stage 4</span>
                   </button>
 
                   {/* TestDev - Execution (Placeholder) */}
@@ -283,7 +279,7 @@ export const IndividualProjectPage: React.FC = () => {
                 <span>Suites</span>
               </div>
               <span className="text-[9px] bg-slate-900 text-slate-400 border border-slate-800 px-1.5 py-0.2 rounded font-mono">
-                Stage 4
+                Stage 5
               </span>
             </button>
           </nav>
@@ -319,9 +315,7 @@ export const IndividualProjectPage: React.FC = () => {
 
         {activeSection === 'repository' && <RepositoryView project={project} />}
 
-        {activeSection === 'test-data' && (
-          <PlaceholderView section="test-data" projectName={project.name} />
-        )}
+        {activeSection === 'test-data' && <TestDataView project={project} />}
 
         {activeSection === 'scripts' && (
           <PlaceholderView section="scripts" projectName={project.name} />

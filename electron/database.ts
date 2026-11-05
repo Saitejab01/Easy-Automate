@@ -135,6 +135,34 @@ export interface SimulatedEmail {
   read: boolean;
 }
 
+// Stage 3: Test Data Management Types
+export type ExcelFormat = '.xlsx' | '.xls';
+
+export interface TestDataFolder {
+  id: string;
+  projectId: string;
+  name: string;
+  parentId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TestDataFile {
+  id: string;
+  projectId: string;
+  folderId: string | null;
+  fileName: string;
+  fileFormat: ExcelFormat;
+  fileSizeBytes: number;
+  fileSizeFormatted: string;
+  uploadedBy: string;
+  uploadedAt: string;
+  fileData?: string; // Base64 content or simulation payload
+  sheetNames?: string[];
+  rowCount?: number;
+  description?: string;
+}
+
 export interface DatabaseSchema {
   users: DbUser[];
   projects: Project[];
@@ -142,6 +170,8 @@ export interface DatabaseSchema {
   pages: RepositoryPage[];
   elements: RepositoryElement[];
   executions: ExecutionRecord[];
+  testDataFolders: TestDataFolder[];
+  testDataFiles: TestDataFile[];
 }
 
 export class JsonDatabase {
@@ -152,7 +182,9 @@ export class JsonDatabase {
     simulatedEmails: [],
     pages: [],
     elements: [],
-    executions: []
+    executions: [],
+    testDataFolders: [],
+    testDataFiles: []
   };
 
   constructor(customPath?: string) {
@@ -185,6 +217,8 @@ export class JsonDatabase {
         if (!this.data.pages) this.data.pages = [];
         if (!this.data.elements) this.data.elements = [];
         if (!this.data.executions) this.data.executions = [];
+        if (!this.data.testDataFolders) this.data.testDataFolders = [];
+        if (!this.data.testDataFiles) this.data.testDataFiles = [];
       } else {
         this.save();
       }
@@ -259,12 +293,18 @@ export class JsonDatabase {
       hasChanges = true;
     }
 
-    // 2. Seed Repository Pages & Elements for projects if empty
+    // 2. Seed Repository Pages, Elements, Executions, and Stage 3 Test Data for projects if empty
     for (const proj of this.data.projects) {
       const existingPages = this.data.pages.filter(p => p.projectId === proj.id);
       if (existingPages.length === 0) {
         this.seedProjectRepository(proj.id);
         this.seedProjectExecutions(proj.id);
+        hasChanges = true;
+      }
+
+      const existingTestData = this.data.testDataFolders.filter(f => f.projectId === proj.id);
+      if (existingTestData.length === 0) {
+        this.seedProjectTestData(proj.id, 'demo@easyautomate.dev');
         hasChanges = true;
       }
     }
@@ -277,7 +317,6 @@ export class JsonDatabase {
   public seedProjectRepository(projectId: string): void {
     const now = new Date().toISOString();
 
-    // Pages from Section 3.1 example
     const loginPageId = 'page_login_' + projectId.slice(-4);
     const homePageId = 'page_home_' + projectId.slice(-4);
     const cartPageId = 'page_cart_' + projectId.slice(-4);
@@ -293,7 +332,6 @@ export class JsonDatabase {
     ];
 
     const elements: RepositoryElement[] = [
-      // Login Page elements
       {
         id: 'el_email_' + projectId.slice(-4),
         projectId,
@@ -352,8 +390,6 @@ export class JsonDatabase {
         createdAt: now,
         updatedAt: now
       },
-
-      // Home Page -> Header Section elements
       {
         id: 'el_profile_icon_' + projectId.slice(-4),
         projectId,
@@ -382,8 +418,6 @@ export class JsonDatabase {
         createdAt: now,
         updatedAt: now
       },
-
-      // Home Page -> Product Section elements
       {
         id: 'el_prod_name_' + projectId.slice(-4),
         projectId,
@@ -412,8 +446,6 @@ export class JsonDatabase {
         createdAt: now,
         updatedAt: now
       },
-
-      // Cart Page elements
       {
         id: 'el_cart_items_' + projectId.slice(-4),
         projectId,
@@ -533,6 +565,165 @@ export class JsonDatabase {
     ];
 
     this.data.executions.push(...executions);
+  }
+
+  // Stage 3: Seed Project Test Data structure matching Section 4.2 example
+  public seedProjectTestData(projectId: string, userEmail: string): void {
+    const now = new Date().toISOString();
+
+    // 1. Folders:
+    // Login Module (Valid Login, Invalid Login)
+    // Product Module (Product Search, Add To Cart)
+    // Payment Module (Credit Card, UPI)
+    // Registration Module
+    const fLogin = 'fld_login_' + projectId.slice(-4);
+    const fLoginValid = 'fld_login_v_' + projectId.slice(-4);
+    const fLoginInvalid = 'fld_login_i_' + projectId.slice(-4);
+
+    const fProduct = 'fld_prod_' + projectId.slice(-4);
+    const fProductSearch = 'fld_prod_s_' + projectId.slice(-4);
+    const fProductCart = 'fld_prod_c_' + projectId.slice(-4);
+
+    const fPayment = 'fld_pay_' + projectId.slice(-4);
+    const fPaymentCC = 'fld_pay_cc_' + projectId.slice(-4);
+    const fPaymentUPI = 'fld_pay_upi_' + projectId.slice(-4);
+
+    const fRegistration = 'fld_reg_' + projectId.slice(-4);
+
+    const folders: TestDataFolder[] = [
+      { id: fLogin, projectId, name: 'Login Module', parentId: null, createdAt: now, updatedAt: now },
+      { id: fLoginValid, projectId, name: 'Valid Login', parentId: fLogin, createdAt: now, updatedAt: now },
+      { id: fLoginInvalid, projectId, name: 'Invalid Login', parentId: fLogin, createdAt: now, updatedAt: now },
+
+      { id: fProduct, projectId, name: 'Product Module', parentId: null, createdAt: now, updatedAt: now },
+      { id: fProductSearch, projectId, name: 'Product Search', parentId: fProduct, createdAt: now, updatedAt: now },
+      { id: fProductCart, projectId, name: 'Add To Cart', parentId: fProduct, createdAt: now, updatedAt: now },
+
+      { id: fPayment, projectId, name: 'Payment Module', parentId: null, createdAt: now, updatedAt: now },
+      { id: fPaymentCC, projectId, name: 'Credit Card', parentId: fPayment, createdAt: now, updatedAt: now },
+      { id: fPaymentUPI, projectId, name: 'UPI', parentId: fPayment, createdAt: now, updatedAt: now },
+
+      { id: fRegistration, projectId, name: 'Registration Module', parentId: null, createdAt: now, updatedAt: now }
+    ];
+
+    // 2. Files matching Section 4.2
+    const files: TestDataFile[] = [
+      {
+        id: 'file_01_' + projectId.slice(-4),
+        projectId,
+        folderId: fLoginValid,
+        fileName: 'valid_login_data.xlsx',
+        fileFormat: '.xlsx',
+        fileSizeBytes: 24576,
+        fileSizeFormatted: '24.0 KB',
+        uploadedBy: userEmail,
+        uploadedAt: new Date(Date.now() - 86400000 * 2).toISOString(),
+        sheetNames: ['Credentials', 'Tokens'],
+        rowCount: 12,
+        description: 'Standard valid user credentials and expected dashboard headings'
+      },
+      {
+        id: 'file_02_' + projectId.slice(-4),
+        projectId,
+        folderId: fLoginInvalid,
+        fileName: 'invalid_login_data.xlsx',
+        fileFormat: '.xlsx',
+        fileSizeBytes: 18432,
+        fileSizeFormatted: '18.0 KB',
+        uploadedBy: userEmail,
+        uploadedAt: new Date(Date.now() - 86400000 * 2).toISOString(),
+        sheetNames: ['BadEmails', 'LockedAccounts'],
+        rowCount: 20,
+        description: 'Malformed emails, locked passwords, and error message assertions'
+      },
+      {
+        id: 'file_03_' + projectId.slice(-4),
+        projectId,
+        folderId: fProductSearch,
+        fileName: 'product_search_data.xlsx',
+        fileFormat: '.xlsx',
+        fileSizeBytes: 32768,
+        fileSizeFormatted: '32.0 KB',
+        uploadedBy: userEmail,
+        uploadedAt: new Date(Date.now() - 86400000).toISOString(),
+        sheetNames: ['SearchKeywords', 'Filters'],
+        rowCount: 45,
+        description: 'Product queries, SKUs, and category filter matrices'
+      },
+      {
+        id: 'file_04_' + projectId.slice(-4),
+        projectId,
+        folderId: fProductCart,
+        fileName: 'cart_valid_data.xlsx',
+        fileFormat: '.xlsx',
+        fileSizeBytes: 28672,
+        fileSizeFormatted: '28.0 KB',
+        uploadedBy: userEmail,
+        uploadedAt: new Date(Date.now() - 86400000).toISOString(),
+        sheetNames: ['Items', 'Coupons'],
+        rowCount: 18,
+        description: 'Cart additions, discounts, and quantity adjustments'
+      },
+      {
+        id: 'file_05_' + projectId.slice(-4),
+        projectId,
+        folderId: fProductCart,
+        fileName: 'cart_invalid_data.xlsx',
+        fileFormat: '.xlsx',
+        fileSizeBytes: 14336,
+        fileSizeFormatted: '14.0 KB',
+        uploadedBy: userEmail,
+        uploadedAt: new Date(Date.now() - 86400000).toISOString(),
+        sheetNames: ['OutOfStock', 'MaxLimit'],
+        rowCount: 10,
+        description: 'Out-of-stock items and quantity limit validation'
+      },
+      {
+        id: 'file_06_' + projectId.slice(-4),
+        projectId,
+        folderId: fPaymentCC,
+        fileName: 'credit_card_data.xlsx',
+        fileFormat: '.xlsx',
+        fileSizeBytes: 21504,
+        fileSizeFormatted: '21.0 KB',
+        uploadedBy: userEmail,
+        uploadedAt: new Date(Date.now() - 3600000 * 8).toISOString(),
+        sheetNames: ['SandboxCards', 'CVV'],
+        rowCount: 15,
+        description: 'Test Visa, Mastercard, Amex numbers and CVV formats'
+      },
+      {
+        id: 'file_07_' + projectId.slice(-4),
+        projectId,
+        folderId: fPaymentUPI,
+        fileName: 'upi_data.xlsx',
+        fileFormat: '.xlsx',
+        fileSizeBytes: 16384,
+        fileSizeFormatted: '16.0 KB',
+        uploadedBy: userEmail,
+        uploadedAt: new Date(Date.now() - 3600000 * 6).toISOString(),
+        sheetNames: ['UPI_IDs', 'Timeouts'],
+        rowCount: 14,
+        description: 'Virtual payment addresses for mock gateway tests'
+      },
+      {
+        id: 'file_08_' + projectId.slice(-4),
+        projectId,
+        folderId: fRegistration,
+        fileName: 'registration_data.xlsx',
+        fileFormat: '.xlsx',
+        fileSizeBytes: 35840,
+        fileSizeFormatted: '35.0 KB',
+        uploadedBy: userEmail,
+        uploadedAt: new Date(Date.now() - 3600000 * 2).toISOString(),
+        sheetNames: ['NewUsers', 'Roles'],
+        rowCount: 50,
+        description: 'User registration profiles, passwords, and security questions'
+      }
+    ];
+
+    this.data.testDataFolders.push(...folders);
+    this.data.testDataFiles.push(...files);
   }
 
   // --- User / Auth Methods ---
@@ -700,9 +891,9 @@ export class JsonDatabase {
     };
 
     this.data.projects.push(newProject);
-    // Seed sample repository & executions
     this.seedProjectRepository(newProject.id);
     this.seedProjectExecutions(newProject.id);
+    this.seedProjectTestData(newProject.id, 'user@easyautomate.dev');
     this.save();
     return newProject;
   }
@@ -744,10 +935,11 @@ export class JsonDatabase {
       throw new Error('Project not found or you do not have permission to delete it.');
     }
     this.data.projects.splice(index, 1);
-    // Cascade delete pages and elements
     this.data.pages = this.data.pages.filter(p => p.projectId !== projectId);
     this.data.elements = this.data.elements.filter(e => e.projectId !== projectId);
     this.data.executions = this.data.executions.filter(e => e.projectId !== projectId);
+    this.data.testDataFolders = this.data.testDataFolders.filter(f => f.projectId !== projectId);
+    this.data.testDataFiles = this.data.testDataFiles.filter(f => f.projectId !== projectId);
     this.save();
     return true;
   }
@@ -764,7 +956,6 @@ export class JsonDatabase {
       throw new Error('Page name is required.');
     }
 
-    // Check duplicate name under same parent
     const existing = this.data.pages.find(p =>
       p.projectId === projectId &&
       (p.parentId || null) === (parentId || null) &&
@@ -822,7 +1013,6 @@ export class JsonDatabase {
       throw new Error('Page not found.');
     }
 
-    // Collect all descendant page IDs recursively
     const idsToDelete: string[] = [pageId];
     const findChildren = (parent: string) => {
       const children = this.data.pages.filter(p => p.parentId === parent);
@@ -833,12 +1023,8 @@ export class JsonDatabase {
     };
     findChildren(pageId);
 
-    // Remove pages
     this.data.pages = this.data.pages.filter(p => !idsToDelete.includes(p.id));
-
-    // Remove all elements in these pages
     this.data.elements = this.data.elements.filter(e => !idsToDelete.includes(e.pageId));
-
     this.save();
     return true;
   }
@@ -870,7 +1056,6 @@ export class JsonDatabase {
       throw new Error('At least one locator configuration is required.');
     }
 
-    // Validate locators
     data.locators.forEach((loc, idx) => {
       if (!loc.type) {
         throw new Error(`Locator #${idx + 1}: Locator Type is mandatory.`);
@@ -878,7 +1063,6 @@ export class JsonDatabase {
       if (!loc.value || !loc.value.trim()) {
         throw new Error(`Locator #${idx + 1}: Locator Value cannot be empty.`);
       }
-      // Check syntax of dynamic placeholders (e.g. unclosed braces)
       const openCount = (loc.value.match(/\{/g) || []).length;
       const closeCount = (loc.value.match(/\}/g) || []).length;
       if (openCount !== closeCount) {
@@ -976,8 +1160,8 @@ export class JsonDatabase {
       .filter(e => e.projectId === projectId)
       .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
 
-    const totalScripts = 14; // Default suite scripts count
-    const totalSuites = 4; // Smoke, Regression, Auth, Checkout
+    const totalScripts = 14;
+    const totalSuites = 4;
     const suiteExecutions = executions.length;
     const passedExecutions = executions.filter(e => e.status === 'Passed').length;
     const failedExecutions = executions.filter(e => e.status === 'Failed').length;
@@ -1003,5 +1187,233 @@ export class JsonDatabase {
       recentExecutions: executions,
       activeMachine: defaultMachine
     };
+  }
+
+  // ================= Stage 3: Test Data Management Methods ================= //
+
+  public getTestDataFolders(projectId: string): TestDataFolder[] {
+    return this.data.testDataFolders.filter(f => f.projectId === projectId);
+  }
+
+  public createTestDataFolder(projectId: string, name: string, parentId?: string | null): TestDataFolder {
+    const cleanName = name.trim();
+    if (!cleanName) {
+      throw new Error('Folder name is required.');
+    }
+
+    const normParentId = parentId || null;
+    const duplicate = this.data.testDataFolders.find(f =>
+      f.projectId === projectId &&
+      f.parentId === normParentId &&
+      f.name.toLowerCase() === cleanName.toLowerCase()
+    );
+    if (duplicate) {
+      throw new Error(`A folder named "${cleanName}" already exists in this directory.`);
+    }
+
+    const now = new Date().toISOString();
+    const newFolder: TestDataFolder = {
+      id: 'fld_' + crypto.randomUUID().slice(0, 8),
+      projectId,
+      name: cleanName,
+      parentId: normParentId,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    this.data.testDataFolders.push(newFolder);
+    this.save();
+    return newFolder;
+  }
+
+  public updateTestDataFolder(folderId: string, projectId: string, name: string): TestDataFolder {
+    const folder = this.data.testDataFolders.find(f => f.id === folderId && f.projectId === projectId);
+    if (!folder) {
+      throw new Error('Folder not found.');
+    }
+
+    const cleanName = name.trim();
+    if (!cleanName) {
+      throw new Error('Folder name cannot be empty.');
+    }
+
+    const duplicate = this.data.testDataFolders.find(f =>
+      f.projectId === projectId &&
+      f.id !== folderId &&
+      f.parentId === folder.parentId &&
+      f.name.toLowerCase() === cleanName.toLowerCase()
+    );
+    if (duplicate) {
+      throw new Error(`Another folder named "${cleanName}" already exists in this directory.`);
+    }
+
+    folder.name = cleanName;
+    folder.updatedAt = new Date().toISOString();
+    this.save();
+    return folder;
+  }
+
+  public deleteTestDataFolder(folderId: string, projectId: string): boolean {
+    const folderIndex = this.data.testDataFolders.findIndex(f => f.id === folderId && f.projectId === projectId);
+    if (folderIndex === -1) {
+      throw new Error('Folder not found.');
+    }
+
+    // Collect all child folder IDs recursively
+    const idsToDelete: string[] = [folderId];
+    const findChildren = (parent: string) => {
+      const children = this.data.testDataFolders.filter(f => f.parentId === parent);
+      for (const c of children) {
+        idsToDelete.push(c.id);
+        findChildren(c.id);
+      }
+    };
+    findChildren(folderId);
+
+    // Remove folders
+    this.data.testDataFolders = this.data.testDataFolders.filter(f => !idsToDelete.includes(f.id));
+
+    // Remove files in all these deleted folders
+    this.data.testDataFiles = this.data.testDataFiles.filter(file => !file.folderId || !idsToDelete.includes(file.folderId));
+
+    this.save();
+    return true;
+  }
+
+  public getTestDataFiles(projectId: string, folderId?: string | null): TestDataFile[] {
+    if (folderId !== undefined) {
+      const normFolderId = folderId || null;
+      return this.data.testDataFiles.filter(f => f.projectId === projectId && f.folderId === normFolderId);
+    }
+    return this.data.testDataFiles.filter(f => f.projectId === projectId);
+  }
+
+  public getTestDataFileById(fileId: string, projectId: string): TestDataFile | undefined {
+    return this.data.testDataFiles.find(f => f.id === fileId && f.projectId === projectId);
+  }
+
+  public uploadTestDataFile(
+    projectId: string,
+    folderId: string | null,
+    file: {
+      fileName: string;
+      fileSizeBytes: number;
+      uploadedBy: string;
+      fileData?: string;
+      sheetNames?: string[];
+      rowCount?: number;
+      description?: string;
+    }
+  ): TestDataFile {
+    const cleanFileName = file.fileName.trim();
+    const ext = cleanFileName.slice(cleanFileName.lastIndexOf('.')).toLowerCase();
+
+    // 4.4 Validation: Only .xlsx and .xls supported
+    if (ext !== '.xlsx' && ext !== '.xls') {
+      throw new Error(`Unsupported file format "${ext}". Only Excel files (.xlsx and .xls) are supported.`);
+    }
+
+    const normFolderId = folderId || null;
+
+    // Check if file with same name exists in this folder (replace or error)
+    const existingIndex = this.data.testDataFiles.findIndex(f =>
+      f.projectId === projectId &&
+      f.folderId === normFolderId &&
+      f.fileName.toLowerCase() === cleanFileName.toLowerCase()
+    );
+
+    // Format file size
+    const formatSize = (bytes: number): string => {
+      if (bytes < 1024) return `${bytes} B`;
+      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+      return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    };
+
+    const now = new Date().toISOString();
+
+    if (existingIndex !== -1) {
+      // Replace existing file
+      const existing = this.data.testDataFiles[existingIndex];
+      existing.fileSizeBytes = file.fileSizeBytes;
+      existing.fileSizeFormatted = formatSize(file.fileSizeBytes);
+      existing.uploadedBy = file.uploadedBy;
+      existing.uploadedAt = now;
+      if (file.fileData) existing.fileData = file.fileData;
+      if (file.sheetNames) existing.sheetNames = file.sheetNames;
+      if (file.rowCount) existing.rowCount = file.rowCount;
+      if (file.description) existing.description = file.description;
+
+      this.save();
+      return existing;
+    }
+
+    const newFile: TestDataFile = {
+      id: 'file_' + crypto.randomUUID().slice(0, 8),
+      projectId,
+      folderId: normFolderId,
+      fileName: cleanFileName,
+      fileFormat: ext as ExcelFormat,
+      fileSizeBytes: file.fileSizeBytes,
+      fileSizeFormatted: formatSize(file.fileSizeBytes),
+      uploadedBy: file.uploadedBy || 'User',
+      uploadedAt: now,
+      fileData: file.fileData || '',
+      sheetNames: file.sheetNames || ['Sheet1'],
+      rowCount: file.rowCount || 10,
+      description: file.description || ''
+    };
+
+    this.data.testDataFiles.push(newFile);
+    this.save();
+    return newFile;
+  }
+
+  public updateTestDataFile(
+    fileId: string,
+    projectId: string,
+    updates: { fileName?: string; description?: string; folderId?: string | null }
+  ): TestDataFile {
+    const file = this.getTestDataFileById(fileId, projectId);
+    if (!file) {
+      throw new Error('Test data file not found.');
+    }
+
+    if (updates.fileName !== undefined) {
+      const cleanName = updates.fileName.trim();
+      const ext = cleanName.slice(cleanName.lastIndexOf('.')).toLowerCase();
+      if (ext !== '.xlsx' && ext !== '.xls') {
+        throw new Error('File extension must remain .xlsx or .xls');
+      }
+
+      const targetFolder = updates.folderId !== undefined ? updates.folderId : file.folderId;
+      const duplicate = this.data.testDataFiles.find(f =>
+        f.projectId === projectId &&
+        f.id !== fileId &&
+        f.folderId === targetFolder &&
+        f.fileName.toLowerCase() === cleanName.toLowerCase()
+      );
+      if (duplicate) {
+        throw new Error(`Another file named "${cleanName}" already exists in this folder.`);
+      }
+
+      file.fileName = cleanName;
+      file.fileFormat = ext as ExcelFormat;
+    }
+
+    if (updates.description !== undefined) file.description = updates.description.trim();
+    if (updates.folderId !== undefined) file.folderId = updates.folderId;
+
+    this.save();
+    return file;
+  }
+
+  public deleteTestDataFile(fileId: string, projectId: string): boolean {
+    const idx = this.data.testDataFiles.findIndex(f => f.id === fileId && f.projectId === projectId);
+    if (idx === -1) {
+      throw new Error('Test data file not found.');
+    }
+    this.data.testDataFiles.splice(idx, 1);
+    this.save();
+    return true;
   }
 }

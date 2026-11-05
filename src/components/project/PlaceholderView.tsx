@@ -51,31 +51,40 @@ for (const row of records) {
     },
     scripts: {
       title: 'TestDev – Automation Scripts',
-      subtitle: 'Playwright TypeScript script editor with natural language synthesis',
-      badge: 'Stage 3 Feature',
+      subtitle: 'Playwright TypeScript script editor with natural language synthesis & data-driven binding',
+      badge: 'Stage 4 Feature',
       icon: FileCode,
       iconColor: 'text-brand-400',
       bgColor: 'bg-brand-500/10',
       borderColor: 'border-brand-500/20',
       description:
-        'Compose, organize, and edit robust Playwright automation scripts. Bind UI steps directly to centralized Repository elements or generate full test sequences from natural language instructions.',
+        'Compose, organize, and edit robust Playwright automation scripts. Bind UI steps directly to centralized Repository elements and parameterize executions using project Excel test datasets (.xlsx / .xls).',
       features: [
         'Interactive Natural Language (NLP) to Playwright synthesis',
-        'Repository Element integration with autocompletion',
+        'Repository Element integration with autocompletion and dynamic locators',
+        'Direct binding to Stage 3 Test Data Excel files for data-driven iterations',
         'TypeScript syntax highlighting & static type analysis',
-        'Reusable Page Object Model (POM) step templates',
-        'Visual assertion builder and step sequencing'
+        'Reusable Page Object Model (POM) step templates and visual assertion builder'
       ],
-      codeSnippet: `// Auto-Generated from NLP Instruction:
-// "Login to storefront and verify checkout button is enabled"
+      codeSnippet: `// Data-Driven Playwright Spec consuming Stage 2 Repo & Stage 3 Test Data
 import { test, expect } from '@playwright/test';
 import { Repository } from './easy-automate.repo';
+import { loadTestData } from './easy-automate.testdata';
 
-test('Storefront Checkout Smoke', async ({ page }) => {
-  await page.locator(Repository.LoginPage.EmailField).fill('user@demo.com');
-  await page.locator(Repository.LoginPage.LoginButton).click();
-  await expect(page.locator(Repository.CartPage.CheckoutButton)).toBeEnabled();
-});`
+// Load uploaded Excel sheet from Login Module / Valid Login
+const testRows = loadTestData('Login Module/Valid Login/valid_login_data.xlsx', 'ValidCredentials');
+
+for (const data of testRows) {
+  test(\`Data-driven login for: \${data.username}\`, async ({ page }) => {
+    // Fill credentials from Excel using centralized Repository locators
+    await page.locator(Repository.LoginPage.EmailInput).fill(data.email);
+    await page.locator(Repository.LoginPage.PasswordInput).fill(data.password);
+    await page.locator(Repository.LoginPage.SubmitButton).click();
+
+    // Verify dashboard greeting with dynamic text
+    await expect(page.locator(Repository.DashboardPage.UserGreeting(data.name))).toBeVisible();
+  });
+}`
     },
     execution: {
       title: 'TestDev – Script Execution',
@@ -86,25 +95,27 @@ test('Storefront Checkout Smoke', async ({ page }) => {
       bgColor: 'bg-amber-500/10',
       borderColor: 'border-amber-500/20',
       description:
-        'Execute automation scripts across Chromium, Firefox, and WebKit browsers. Monitor live execution progress, terminal logs, interactive step traces, and automatic failure screenshots.',
+        'Execute automation scripts across Chromium, Firefox, and WebKit browsers. Parameterize runs across multiple rows of uploaded Excel test data, and monitor live step traces and failure screenshots.',
       features: [
+        'Multi-row parameter matrix execution driven by uploaded Excel workbooks',
         'Background execution worker decoupled from UI thread',
         'Parallel browser execution (Chromium, Firefox, WebKit)',
         'Live streaming console logs and step-by-step progress',
-        'Automatic failure screenshot & video recording capture',
-        'Playwright trace viewer integration for deep debugging'
+        'Automatic failure screenshot, video recording, and Playwright trace capture'
       ],
-      codeSnippet: `// Execution Worker Queue Job Spec
+      codeSnippet: `// Execution Worker Queue Job Spec with Test Data Binding
 {
   "jobId": "exec_job_9182",
   "project": "${projectName}",
   "browser": "chromium",
-  "headless": true,
-  "workers": 4,
-  "retries": 1,
+  "dataset": {
+    "file": "Login Module/Valid Login/valid_login_data.xlsx",
+    "sheet": "ValidCredentials",
+    "rows": "1-50"
+  },
+  "concurrency": 4,
   "artifacts": {
     "screenshots": "only-on-failure",
-    "video": "retain-on-failure",
     "trace": "on-first-retry"
   }
 }`
@@ -112,23 +123,24 @@ test('Storefront Checkout Smoke', async ({ page }) => {
     suites: {
       title: 'Test Suites Orchestration',
       subtitle: 'Organize, schedule, and execute grouped automation suites',
-      badge: 'Stage 4 Feature',
+      badge: 'Stage 5 Feature',
       icon: Layers,
       iconColor: 'text-purple-400',
       bgColor: 'bg-purple-500/10',
       borderColor: 'border-purple-500/20',
       description:
-        'Aggregate individual scripts into comprehensive Smoke, Regression, and Sanity test suites. Schedule automated runs and view consolidated Allure execution reports.',
+        'Aggregate individual scripts into comprehensive Smoke, Regression, and Sanity test suites. Bind suites to environment-specific Test Data sheets and view consolidated Allure execution reports.',
       features: [
         'Visual suite grouping (Smoke, Regression, End-to-End)',
+        'Environment-specific Test Data dataset bindings (Dev, Staging, Prod)',
         'Execution dependency management and priority tagging',
         'Scheduled recurring suite runs (Cron / CI triggers)',
-        'Consolidated Allure & HTML test reports',
-        'Webhook & Slack failure notification alerts'
+        'Consolidated Allure & HTML test reports with Slack webhook notifications'
       ],
-      codeSnippet: `// Test Suite Definition
+      codeSnippet: `// Test Suite Definition with Cross-Module Test Data Binding
 export const RegressionSuite = {
   name: "Nightly Regression Suite",
+  dataset: "Payment Module/Credit Card/credit_card_data.xlsx",
   tags: ["@regression", "@smoke"],
   concurrency: 4,
   browsers: ["chromium", "firefox", "webkit"],
@@ -213,3 +225,4 @@ export const RegressionSuite = {
     </div>
   );
 };
+

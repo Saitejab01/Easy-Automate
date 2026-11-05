@@ -9,7 +9,12 @@ import {
   RepositoryElement,
   ProjectStats,
   Locator,
-  ElementType
+  ElementType,
+  TestDataFolder,
+  TestDataFile,
+  ExcelFormat,
+  TestDataFoldersResponse,
+  TestDataFilesResponse
 } from './types';
 
 const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI;
@@ -20,7 +25,8 @@ const LS_PROJECTS = 'easy_automate_projects';
 const LS_EMAILS = 'easy_automate_emails';
 const LS_PAGES = 'easy_automate_pages';
 const LS_ELEMENTS = 'easy_automate_elements';
-const LS_EXECUTIONS = 'easy_automate_executions';
+const LS_TD_FOLDERS = 'easy_automate_td_folders';
+const LS_TD_FILES = 'easy_automate_td_files';
 
 function simpleHash(str: string): string {
   let hash = 0;
@@ -121,7 +127,6 @@ function getLocalPages(projectId: string): RepositoryPage[] {
     let allPages: RepositoryPage[] = raw ? JSON.parse(raw) : [];
     let projectPages = allPages.filter(p => p.projectId === projectId);
     if (projectPages.length === 0) {
-      // Seed default pages
       const now = new Date().toISOString();
       const loginPageId = 'page_login_' + projectId.slice(-4);
       const homePageId = 'page_home_' + projectId.slice(-4);
@@ -328,14 +333,209 @@ function saveLocalElements(elements: RepositoryElement[], projectId: string) {
   } catch {}
 }
 
+// Stage 3 Test Data Local Storage Helpers
+function getLocalTestDataFolders(projectId: string): TestDataFolder[] {
+  try {
+    const raw = localStorage.getItem(LS_TD_FOLDERS);
+    let allFolders: TestDataFolder[] = raw ? JSON.parse(raw) : [];
+    let projectFolders = allFolders.filter(f => f.projectId === projectId);
+    if (projectFolders.length === 0) {
+      const now = new Date().toISOString();
+      const fLogin = 'fld_login_' + projectId.slice(-4);
+      const fLoginValid = 'fld_login_v_' + projectId.slice(-4);
+      const fLoginInvalid = 'fld_login_i_' + projectId.slice(-4);
+      const fProduct = 'fld_prod_' + projectId.slice(-4);
+      const fProductSearch = 'fld_prod_s_' + projectId.slice(-4);
+      const fProductCart = 'fld_prod_c_' + projectId.slice(-4);
+      const fPayment = 'fld_pay_' + projectId.slice(-4);
+      const fPaymentCC = 'fld_pay_cc_' + projectId.slice(-4);
+      const fPaymentUPI = 'fld_pay_upi_' + projectId.slice(-4);
+      const fRegistration = 'fld_reg_' + projectId.slice(-4);
+
+      projectFolders = [
+        { id: fLogin, projectId, name: 'Login Module', parentId: null, createdAt: now, updatedAt: now },
+        { id: fLoginValid, projectId, name: 'Valid Login', parentId: fLogin, createdAt: now, updatedAt: now },
+        { id: fLoginInvalid, projectId, name: 'Invalid Login', parentId: fLogin, createdAt: now, updatedAt: now },
+        { id: fProduct, projectId, name: 'Product Module', parentId: null, createdAt: now, updatedAt: now },
+        { id: fProductSearch, projectId, name: 'Product Search', parentId: fProduct, createdAt: now, updatedAt: now },
+        { id: fProductCart, projectId, name: 'Add To Cart', parentId: fProduct, createdAt: now, updatedAt: now },
+        { id: fPayment, projectId, name: 'Payment Module', parentId: null, createdAt: now, updatedAt: now },
+        { id: fPaymentCC, projectId, name: 'Credit Card', parentId: fPayment, createdAt: now, updatedAt: now },
+        { id: fPaymentUPI, projectId, name: 'UPI', parentId: fPayment, createdAt: now, updatedAt: now },
+        { id: fRegistration, projectId, name: 'Registration Module', parentId: null, createdAt: now, updatedAt: now }
+      ];
+      allFolders.push(...projectFolders);
+      localStorage.setItem(LS_TD_FOLDERS, JSON.stringify(allFolders));
+    }
+    return projectFolders;
+  } catch {
+    return [];
+  }
+}
+
+function saveLocalTestDataFolders(folders: TestDataFolder[], projectId: string) {
+  try {
+    const raw = localStorage.getItem(LS_TD_FOLDERS);
+    let allFolders: TestDataFolder[] = raw ? JSON.parse(raw) : [];
+    allFolders = allFolders.filter(f => f.projectId !== projectId).concat(folders);
+    localStorage.setItem(LS_TD_FOLDERS, JSON.stringify(allFolders));
+  } catch {}
+}
+
+function getLocalTestDataFiles(projectId: string): TestDataFile[] {
+  try {
+    const raw = localStorage.getItem(LS_TD_FILES);
+    let allFiles: TestDataFile[] = raw ? JSON.parse(raw) : [];
+    let projectFiles = allFiles.filter(f => f.projectId === projectId);
+    if (projectFiles.length === 0) {
+      const now = new Date().toISOString();
+      const folders = getLocalTestDataFolders(projectId);
+      const fLoginValid = folders.find(f => f.name === 'Valid Login')?.id || null;
+      const fLoginInvalid = folders.find(f => f.name === 'Invalid Login')?.id || null;
+      const fProductSearch = folders.find(f => f.name === 'Product Search')?.id || null;
+      const fProductCart = folders.find(f => f.name === 'Add To Cart')?.id || null;
+      const fPaymentCC = folders.find(f => f.name === 'Credit Card')?.id || null;
+      const fPaymentUPI = folders.find(f => f.name === 'UPI')?.id || null;
+      const fRegistration = folders.find(f => f.name === 'Registration Module')?.id || null;
+
+      projectFiles = [
+        {
+          id: 'file_01_' + projectId.slice(-4),
+          projectId,
+          folderId: fLoginValid,
+          fileName: 'valid_login_data.xlsx',
+          fileFormat: '.xlsx',
+          fileSizeBytes: 24576,
+          fileSizeFormatted: '24.0 KB',
+          uploadedBy: 'demo@easyautomate.dev',
+          uploadedAt: new Date(Date.now() - 86400000 * 2).toISOString(),
+          sheetNames: ['Credentials', 'Tokens'],
+          rowCount: 12,
+          description: 'Standard valid user credentials and expected dashboard headings'
+        },
+        {
+          id: 'file_02_' + projectId.slice(-4),
+          projectId,
+          folderId: fLoginInvalid,
+          fileName: 'invalid_login_data.xlsx',
+          fileFormat: '.xlsx',
+          fileSizeBytes: 18432,
+          fileSizeFormatted: '18.0 KB',
+          uploadedBy: 'demo@easyautomate.dev',
+          uploadedAt: new Date(Date.now() - 86400000 * 2).toISOString(),
+          sheetNames: ['BadEmails', 'LockedAccounts'],
+          rowCount: 20,
+          description: 'Malformed emails, locked passwords, and error message assertions'
+        },
+        {
+          id: 'file_03_' + projectId.slice(-4),
+          projectId,
+          folderId: fProductSearch,
+          fileName: 'product_search_data.xlsx',
+          fileFormat: '.xlsx',
+          fileSizeBytes: 32768,
+          fileSizeFormatted: '32.0 KB',
+          uploadedBy: 'demo@easyautomate.dev',
+          uploadedAt: new Date(Date.now() - 86400000).toISOString(),
+          sheetNames: ['SearchKeywords', 'Filters'],
+          rowCount: 45,
+          description: 'Product queries, SKUs, and category filter matrices'
+        },
+        {
+          id: 'file_04_' + projectId.slice(-4),
+          projectId,
+          folderId: fProductCart,
+          fileName: 'cart_valid_data.xlsx',
+          fileFormat: '.xlsx',
+          fileSizeBytes: 28672,
+          fileSizeFormatted: '28.0 KB',
+          uploadedBy: 'demo@easyautomate.dev',
+          uploadedAt: new Date(Date.now() - 86400000).toISOString(),
+          sheetNames: ['Items', 'Coupons'],
+          rowCount: 18,
+          description: 'Cart additions, discounts, and quantity adjustments'
+        },
+        {
+          id: 'file_05_' + projectId.slice(-4),
+          projectId,
+          folderId: fProductCart,
+          fileName: 'cart_invalid_data.xlsx',
+          fileFormat: '.xlsx',
+          fileSizeBytes: 14336,
+          fileSizeFormatted: '14.0 KB',
+          uploadedBy: 'demo@easyautomate.dev',
+          uploadedAt: new Date(Date.now() - 86400000).toISOString(),
+          sheetNames: ['OutOfStock', 'MaxLimit'],
+          rowCount: 10,
+          description: 'Out-of-stock items and quantity limit validation'
+        },
+        {
+          id: 'file_06_' + projectId.slice(-4),
+          projectId,
+          folderId: fPaymentCC,
+          fileName: 'credit_card_data.xlsx',
+          fileFormat: '.xlsx',
+          fileSizeBytes: 21504,
+          fileSizeFormatted: '21.0 KB',
+          uploadedBy: 'demo@easyautomate.dev',
+          uploadedAt: new Date(Date.now() - 3600000 * 8).toISOString(),
+          sheetNames: ['SandboxCards', 'CVV'],
+          rowCount: 15,
+          description: 'Test Visa, Mastercard, Amex numbers and CVV formats'
+        },
+        {
+          id: 'file_07_' + projectId.slice(-4),
+          projectId,
+          folderId: fPaymentUPI,
+          fileName: 'upi_data.xlsx',
+          fileFormat: '.xlsx',
+          fileSizeBytes: 16384,
+          fileSizeFormatted: '16.0 KB',
+          uploadedBy: 'demo@easyautomate.dev',
+          uploadedAt: new Date(Date.now() - 3600000 * 6).toISOString(),
+          sheetNames: ['UPI_IDs', 'Timeouts'],
+          rowCount: 14,
+          description: 'Virtual payment addresses for mock gateway tests'
+        },
+        {
+          id: 'file_08_' + projectId.slice(-4),
+          projectId,
+          folderId: fRegistration,
+          fileName: 'registration_data.xlsx',
+          fileFormat: '.xlsx',
+          fileSizeBytes: 35840,
+          fileSizeFormatted: '35.0 KB',
+          uploadedBy: 'demo@easyautomate.dev',
+          uploadedAt: new Date(Date.now() - 3600000 * 2).toISOString(),
+          sheetNames: ['NewUsers', 'Roles'],
+          rowCount: 50,
+          description: 'User registration profiles, passwords, and security questions'
+        }
+      ];
+      allFiles.push(...projectFiles);
+      localStorage.setItem(LS_TD_FILES, JSON.stringify(allFiles));
+    }
+    return projectFiles;
+  } catch {
+    return [];
+  }
+}
+
+function saveLocalTestDataFiles(files: TestDataFile[], projectId: string) {
+  try {
+    const raw = localStorage.getItem(LS_TD_FILES);
+    let allFiles: TestDataFile[] = raw ? JSON.parse(raw) : [];
+    allFiles = allFiles.filter(f => f.projectId !== projectId).concat(files);
+    localStorage.setItem(LS_TD_FILES, JSON.stringify(allFiles));
+  } catch {}
+}
+
 export const api = {
   isElectron,
 
   auth: {
     async register(email: string): Promise<AuthResponse> {
-      if (isElectron) {
-        return (window as any).electronAPI.auth.register(email);
-      }
+      if (isElectron) return (window as any).electronAPI.auth.register(email);
       const cleanEmail = email.trim().toLowerCase();
       const users = getLocalUsers();
       const existing = users.find(u => u.email.toLowerCase() === cleanEmail);
@@ -349,21 +549,18 @@ export const api = {
         existing.activationToken = token;
         existing.activationExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
         saveLocalUsers(users);
-
-        const emailItem: SimulatedEmail = {
+        const emails = getLocalEmails();
+        emails.unshift({
           id: 'eml_' + Math.random().toString(36).substring(2, 9),
           to: cleanEmail,
           subject: 'Activate Your Easy Automate Account',
-          body: `Welcome to Easy Automate!\n\nPlease complete your account setup and choose your password by clicking the link below:\n\n${window.location.origin}${link}`,
+          body: `Welcome to Easy Automate!\n\nPlease complete your account setup:\n\n${window.location.origin}${link}`,
           activationToken: token,
           activationLink: link,
           sentAt: new Date().toISOString(),
           read: false
-        };
-        const emails = getLocalEmails();
-        emails.unshift(emailItem);
+        });
         saveLocalEmails(emails);
-
         return { success: true, user: existing, activationToken: token, activationLink: link };
       }
 
@@ -377,28 +574,23 @@ export const api = {
       };
       users.push(newUser);
       saveLocalUsers(users);
-
-      const emailItem: SimulatedEmail = {
+      const emails = getLocalEmails();
+      emails.unshift({
         id: 'eml_' + Math.random().toString(36).substring(2, 9),
         to: cleanEmail,
         subject: 'Activate Your Easy Automate Account',
-        body: `Welcome to Easy Automate!\n\nPlease complete your account setup and choose your password by clicking the link below:\n\n${window.location.origin}${link}`,
+        body: `Welcome to Easy Automate!\n\nPlease complete your account setup:\n\n${window.location.origin}${link}`,
         activationToken: token,
         activationLink: link,
         sentAt: new Date().toISOString(),
         read: false
-      };
-      const emails = getLocalEmails();
-      emails.unshift(emailItem);
+      });
       saveLocalEmails(emails);
-
       return { success: true, user: newUser, activationToken: token, activationLink: link };
     },
 
     async verifyToken(token: string): Promise<TokenVerifyResponse> {
-      if (isElectron) {
-        return (window as any).electronAPI.auth.verifyToken(token);
-      }
+      if (isElectron) return (window as any).electronAPI.auth.verifyToken(token);
       const users = getLocalUsers();
       const user = users.find(u => u.activationToken === token);
       if (!user) return { valid: false, error: 'Invalid or expired activation link.' };
@@ -407,9 +599,7 @@ export const api = {
     },
 
     async activateAccount(token: string, password: string): Promise<AuthResponse> {
-      if (isElectron) {
-        return (window as any).electronAPI.auth.activateAccount(token, password);
-      }
+      if (isElectron) return (window as any).electronAPI.auth.activateAccount(token, password);
       const users = getLocalUsers();
       const user = users.find(u => u.activationToken === token);
       if (!user) return { success: false, error: 'Invalid or expired activation token.' };
@@ -426,9 +616,7 @@ export const api = {
     },
 
     async login(email: string, password: string): Promise<AuthResponse> {
-      if (isElectron) {
-        return (window as any).electronAPI.auth.login(email, password);
-      }
+      if (isElectron) return (window as any).electronAPI.auth.login(email, password);
       const cleanEmail = email.trim().toLowerCase();
       const users = getLocalUsers();
       const user = users.find(u => u.email.toLowerCase() === cleanEmail);
@@ -441,15 +629,12 @@ export const api = {
       if (user.passwordHash !== expectedHash) {
         return { success: false, error: 'Invalid email or password. Please try again.' };
       }
-
       const { passwordHash, ...safeUser } = user;
       return { success: true, user: safeUser };
     },
 
     async getUser(userId: string): Promise<User | null> {
-      if (isElectron) {
-        return (window as any).electronAPI.auth.getUser(userId);
-      }
+      if (isElectron) return (window as any).electronAPI.auth.getUser(userId);
       const users = getLocalUsers();
       const user = users.find(u => u.id === userId);
       if (!user) return null;
@@ -460,26 +645,20 @@ export const api = {
 
   projects: {
     async getAll(userId: string): Promise<ProjectsResponse> {
-      if (isElectron) {
-        return (window as any).electronAPI.projects.getAll(userId);
-      }
+      if (isElectron) return (window as any).electronAPI.projects.getAll(userId);
       const projects = getLocalProjects().filter(p => p.userId === userId);
       return { success: true, projects };
     },
 
     async getById(projectId: string, userId: string): Promise<ProjectsResponse> {
-      if (isElectron) {
-        return (window as any).electronAPI.projects.getById(projectId, userId);
-      }
+      if (isElectron) return (window as any).electronAPI.projects.getById(projectId, userId);
       const project = getLocalProjects().find(p => p.id === projectId && p.userId === userId);
       if (!project) return { success: false, error: 'Project not found.' };
       return { success: true, project };
     },
 
     async create(userId: string, data: { name: string; description?: string; baseUrl?: string; environment?: string; defaultBrowser?: string }): Promise<ProjectsResponse> {
-      if (isElectron) {
-        return (window as any).electronAPI.projects.create(userId, data);
-      }
+      if (isElectron) return (window as any).electronAPI.projects.create(userId, data);
       const cleanName = data.name.trim();
       if (!cleanName || cleanName.length < 3) return { success: false, error: 'Project name must be at least 3 characters long.' };
       if (cleanName.length > 50) return { success: false, error: 'Project name cannot exceed 50 characters.' };
@@ -508,9 +687,7 @@ export const api = {
     },
 
     async update(projectId: string, userId: string, updates: Partial<Project>): Promise<ProjectsResponse> {
-      if (isElectron) {
-        return (window as any).electronAPI.projects.update(projectId, userId, updates);
-      }
+      if (isElectron) return (window as any).electronAPI.projects.update(projectId, userId, updates);
       const projects = getLocalProjects();
       const project = projects.find(p => p.id === projectId && p.userId === userId);
       if (!project) return { success: false, error: 'Project not found.' };
@@ -532,9 +709,7 @@ export const api = {
     },
 
     async delete(projectId: string, userId: string): Promise<{ success: boolean; error?: string }> {
-      if (isElectron) {
-        return (window as any).electronAPI.projects.delete(projectId, userId);
-      }
+      if (isElectron) return (window as any).electronAPI.projects.delete(projectId, userId);
       const projects = getLocalProjects();
       const index = projects.findIndex(p => p.id === projectId && p.userId === userId);
       if (index === -1) return { success: false, error: 'Project not found.' };
@@ -549,16 +724,12 @@ export const api = {
 
   repository: {
     async getPages(projectId: string): Promise<{ success: boolean; pages?: RepositoryPage[]; error?: string }> {
-      if (isElectron) {
-        return (window as any).electronAPI.repository.getPages(projectId);
-      }
+      if (isElectron) return (window as any).electronAPI.repository.getPages(projectId);
       return { success: true, pages: getLocalPages(projectId) };
     },
 
     async createPage(projectId: string, name: string, parentId?: string | null): Promise<{ success: boolean; page?: RepositoryPage; error?: string }> {
-      if (isElectron) {
-        return (window as any).electronAPI.repository.createPage(projectId, name, parentId);
-      }
+      if (isElectron) return (window as any).electronAPI.repository.createPage(projectId, name, parentId);
       const pages = getLocalPages(projectId);
       const cleanName = name.trim();
       if (!cleanName) return { success: false, error: 'Page name is required.' };
@@ -580,9 +751,7 @@ export const api = {
     },
 
     async updatePage(pageId: string, projectId: string, name: string): Promise<{ success: boolean; page?: RepositoryPage; error?: string }> {
-      if (isElectron) {
-        return (window as any).electronAPI.repository.updatePage(pageId, projectId, name);
-      }
+      if (isElectron) return (window as any).electronAPI.repository.updatePage(pageId, projectId, name);
       const pages = getLocalPages(projectId);
       const page = pages.find(p => p.id === pageId);
       if (!page) return { success: false, error: 'Page not found.' };
@@ -599,9 +768,7 @@ export const api = {
     },
 
     async deletePage(pageId: string, projectId: string): Promise<{ success: boolean; error?: string }> {
-      if (isElectron) {
-        return (window as any).electronAPI.repository.deletePage(pageId, projectId);
-      }
+      if (isElectron) return (window as any).electronAPI.repository.deletePage(pageId, projectId);
       let pages = getLocalPages(projectId);
       const idsToDelete: string[] = [pageId];
       const findChildren = (parent: string) => {
@@ -618,25 +785,18 @@ export const api = {
       let elements = getLocalElements(projectId);
       elements = elements.filter(e => !idsToDelete.includes(e.pageId));
       saveLocalElements(elements, projectId);
-
       return { success: true };
     },
 
     async getElements(projectId: string, pageId?: string): Promise<{ success: boolean; elements?: RepositoryElement[]; error?: string }> {
-      if (isElectron) {
-        return (window as any).electronAPI.repository.getElements(projectId, pageId);
-      }
+      if (isElectron) return (window as any).electronAPI.repository.getElements(projectId, pageId);
       let elements = getLocalElements(projectId);
-      if (pageId) {
-        elements = elements.filter(e => e.pageId === pageId);
-      }
+      if (pageId) elements = elements.filter(e => e.pageId === pageId);
       return { success: true, elements };
     },
 
     async createElement(projectId: string, pageId: string, data: { name: string; type: ElementType; description?: string; locators: Locator[] }): Promise<{ success: boolean; element?: RepositoryElement; error?: string }> {
-      if (isElectron) {
-        return (window as any).electronAPI.repository.createElement(projectId, pageId, data);
-      }
+      if (isElectron) return (window as any).electronAPI.repository.createElement(projectId, pageId, data);
       const cleanName = data.name.trim();
       if (!cleanName) return { success: false, error: 'Element Name is mandatory.' };
       if (!data.type) return { success: false, error: 'Element Type is mandatory.' };
@@ -675,9 +835,7 @@ export const api = {
     },
 
     async updateElement(elementId: string, projectId: string, data: { name: string; type: ElementType; description?: string; pageId?: string; locators: Locator[] }): Promise<{ success: boolean; element?: RepositoryElement; error?: string }> {
-      if (isElectron) {
-        return (window as any).electronAPI.repository.updateElement(elementId, projectId, data);
-      }
+      if (isElectron) return (window as any).electronAPI.repository.updateElement(elementId, projectId, data);
       const elements = getLocalElements(projectId);
       const el = elements.find(e => e.id === elementId);
       if (!el) return { success: false, error: 'Element not found.' };
@@ -712,9 +870,7 @@ export const api = {
     },
 
     async deleteElement(elementId: string, projectId: string): Promise<{ success: boolean; error?: string }> {
-      if (isElectron) {
-        return (window as any).electronAPI.repository.deleteElement(elementId, projectId);
-      }
+      if (isElectron) return (window as any).electronAPI.repository.deleteElement(elementId, projectId);
       let elements = getLocalElements(projectId);
       const idx = elements.findIndex(e => e.id === elementId);
       if (idx === -1) return { success: false, error: 'Element not found.' };
@@ -725,13 +881,208 @@ export const api = {
     }
   },
 
+  // ================= Stage 3: Test Data Management API ================= //
+
+  testData: {
+    async getFolders(projectId: string): Promise<TestDataFoldersResponse> {
+      if (isElectron) return (window as any).electronAPI.testData.getFolders(projectId);
+      return { success: true, folders: getLocalTestDataFolders(projectId) };
+    },
+
+    async createFolder(projectId: string, name: string, parentId?: string | null): Promise<TestDataFoldersResponse> {
+      if (isElectron) return (window as any).electronAPI.testData.createFolder(projectId, name, parentId);
+      const cleanName = name.trim();
+      if (!cleanName) return { success: false, error: 'Folder name is required.' };
+
+      const folders = getLocalTestDataFolders(projectId);
+      const normParentId = parentId || null;
+      const duplicate = folders.find(f => f.parentId === normParentId && f.name.toLowerCase() === cleanName.toLowerCase());
+      if (duplicate) return { success: false, error: `A folder named "${cleanName}" already exists in this directory.` };
+
+      const newFolder: TestDataFolder = {
+        id: 'fld_' + Math.random().toString(36).substring(2, 9),
+        projectId,
+        name: cleanName,
+        parentId: normParentId,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      folders.push(newFolder);
+      saveLocalTestDataFolders(folders, projectId);
+      return { success: true, folder: newFolder };
+    },
+
+    async updateFolder(folderId: string, projectId: string, name: string): Promise<TestDataFoldersResponse> {
+      if (isElectron) return (window as any).electronAPI.testData.updateFolder(folderId, projectId, name);
+      const cleanName = name.trim();
+      if (!cleanName) return { success: false, error: 'Folder name cannot be empty.' };
+
+      const folders = getLocalTestDataFolders(projectId);
+      const folder = folders.find(f => f.id === folderId);
+      if (!folder) return { success: false, error: 'Folder not found.' };
+
+      const duplicate = folders.find(f => f.id !== folderId && f.parentId === folder.parentId && f.name.toLowerCase() === cleanName.toLowerCase());
+      if (duplicate) return { success: false, error: `Another folder named "${cleanName}" already exists in this directory.` };
+
+      folder.name = cleanName;
+      folder.updatedAt = new Date().toISOString();
+      saveLocalTestDataFolders(folders, projectId);
+      return { success: true, folder };
+    },
+
+    async deleteFolder(folderId: string, projectId: string): Promise<{ success: boolean; error?: string }> {
+      if (isElectron) return (window as any).electronAPI.testData.deleteFolder(folderId, projectId);
+      let folders = getLocalTestDataFolders(projectId);
+      const idsToDelete: string[] = [folderId];
+      const findChildren = (parent: string) => {
+        folders.filter(f => f.parentId === parent).forEach(c => {
+          idsToDelete.push(c.id);
+          findChildren(c.id);
+        });
+      };
+      findChildren(folderId);
+
+      folders = folders.filter(f => !idsToDelete.includes(f.id));
+      saveLocalTestDataFolders(folders, projectId);
+
+      let files = getLocalTestDataFiles(projectId);
+      files = files.filter(f => !f.folderId || !idsToDelete.includes(f.folderId));
+      saveLocalTestDataFiles(files, projectId);
+
+      return { success: true };
+    },
+
+    async getFiles(projectId: string, folderId?: string | null): Promise<TestDataFilesResponse> {
+      if (isElectron) return (window as any).electronAPI.testData.getFiles(projectId, folderId);
+      const files = getLocalTestDataFiles(projectId);
+      if (folderId !== undefined) {
+        const norm = folderId || null;
+        return { success: true, files: files.filter(f => f.folderId === norm) };
+      }
+      return { success: true, files };
+    },
+
+    async getFileById(fileId: string, projectId: string): Promise<TestDataFilesResponse> {
+      if (isElectron) return (window as any).electronAPI.testData.getFileById(fileId, projectId);
+      const files = getLocalTestDataFiles(projectId);
+      const file = files.find(f => f.id === fileId);
+      if (!file) return { success: false, error: 'File not found.' };
+      return { success: true, file };
+    },
+
+    async uploadFile(
+      projectId: string,
+      folderId: string | null,
+      file: {
+        fileName: string;
+        fileSizeBytes: number;
+        uploadedBy: string;
+        fileData?: string;
+        sheetNames?: string[];
+        rowCount?: number;
+        description?: string;
+      }
+    ): Promise<TestDataFilesResponse> {
+      if (isElectron) return (window as any).electronAPI.testData.uploadFile(projectId, folderId, file);
+      const cleanFileName = file.fileName.trim();
+      const ext = cleanFileName.slice(cleanFileName.lastIndexOf('.')).toLowerCase();
+      if (ext !== '.xlsx' && ext !== '.xls') {
+        return { success: false, error: `Unsupported file format "${ext}". Only Excel files (.xlsx and .xls) are supported.` };
+      }
+
+      const files = getLocalTestDataFiles(projectId);
+      const normFolderId = folderId || null;
+      const formatSize = (bytes: number): string => {
+        if (bytes < 1024) return `${bytes} B`;
+        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+        return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+      };
+
+      const existingIndex = files.findIndex(f => f.folderId === normFolderId && f.fileName.toLowerCase() === cleanFileName.toLowerCase());
+      const now = new Date().toISOString();
+
+      if (existingIndex !== -1) {
+        files[existingIndex] = {
+          ...files[existingIndex],
+          fileSizeBytes: file.fileSizeBytes,
+          fileSizeFormatted: formatSize(file.fileSizeBytes),
+          uploadedBy: file.uploadedBy,
+          uploadedAt: now,
+          fileData: file.fileData,
+          sheetNames: file.sheetNames || ['Sheet1'],
+          rowCount: file.rowCount || 12,
+          description: file.description || files[existingIndex].description
+        };
+        saveLocalTestDataFiles(files, projectId);
+        return { success: true, file: files[existingIndex] };
+      }
+
+      const newFile: TestDataFile = {
+        id: 'file_' + Math.random().toString(36).substring(2, 9),
+        projectId,
+        folderId: normFolderId,
+        fileName: cleanFileName,
+        fileFormat: ext as ExcelFormat,
+        fileSizeBytes: file.fileSizeBytes,
+        fileSizeFormatted: formatSize(file.fileSizeBytes),
+        uploadedBy: file.uploadedBy || 'User',
+        uploadedAt: now,
+        fileData: file.fileData || '',
+        sheetNames: file.sheetNames || ['Sheet1'],
+        rowCount: file.rowCount || 12,
+        description: file.description || ''
+      };
+
+      files.push(newFile);
+      saveLocalTestDataFiles(files, projectId);
+      return { success: true, file: newFile };
+    },
+
+    async updateFile(
+      fileId: string,
+      projectId: string,
+      updates: { fileName?: string; description?: string; folderId?: string | null }
+    ): Promise<TestDataFilesResponse> {
+      if (isElectron) return (window as any).electronAPI.testData.updateFile(fileId, projectId, updates);
+      const files = getLocalTestDataFiles(projectId);
+      const file = files.find(f => f.id === fileId);
+      if (!file) return { success: false, error: 'File not found.' };
+
+      if (updates.fileName !== undefined) {
+        const cleanName = updates.fileName.trim();
+        const ext = cleanName.slice(cleanName.lastIndexOf('.')).toLowerCase();
+        if (ext !== '.xlsx' && ext !== '.xls') {
+          return { success: false, error: 'File extension must remain .xlsx or .xls' };
+        }
+        const targetFolder = updates.folderId !== undefined ? updates.folderId : file.folderId;
+        const duplicate = files.find(f => f.id !== fileId && f.folderId === targetFolder && f.fileName.toLowerCase() === cleanName.toLowerCase());
+        if (duplicate) return { success: false, error: `Another file named "${cleanName}" already exists in this folder.` };
+        file.fileName = cleanName;
+        file.fileFormat = ext as ExcelFormat;
+      }
+      if (updates.description !== undefined) file.description = updates.description;
+      if (updates.folderId !== undefined) file.folderId = updates.folderId;
+
+      saveLocalTestDataFiles(files, projectId);
+      return { success: true, file };
+    },
+
+    async deleteFile(fileId: string, projectId: string): Promise<{ success: boolean; error?: string }> {
+      if (isElectron) return (window as any).electronAPI.testData.deleteFile(fileId, projectId);
+      let files = getLocalTestDataFiles(projectId);
+      const idx = files.findIndex(f => f.id === fileId);
+      if (idx === -1) return { success: false, error: 'File not found.' };
+      files.splice(idx, 1);
+      saveLocalTestDataFiles(files, projectId);
+      return { success: true };
+    }
+  },
+
   // ================= Stage 2: Dashboard API ================= //
 
   dashboard: {
     async getStats(projectId: string): Promise<{ success: boolean; stats?: ProjectStats; error?: string }> {
-      if (isElectron) {
-        return (window as any).electronAPI.dashboard.getStats(projectId);
-      }
+      if (isElectron) return (window as any).electronAPI.dashboard.getStats(projectId);
       const elements = getLocalElements(projectId);
       const stats: ProjectStats = {
         totalScripts: 14,
@@ -838,13 +1189,9 @@ export const api = {
 
   email: {
     async getSimulatedEmails(toEmail?: string): Promise<SimulatedEmail[]> {
-      if (isElectron) {
-        return (window as any).electronAPI.email.getSimulatedEmails(toEmail);
-      }
+      if (isElectron) return (window as any).electronAPI.email.getSimulatedEmails(toEmail);
       const emails = getLocalEmails();
-      if (toEmail) {
-        return emails.filter(e => e.to.toLowerCase() === toEmail.trim().toLowerCase());
-      }
+      if (toEmail) return emails.filter(e => e.to.toLowerCase() === toEmail.trim().toLowerCase());
       return emails;
     }
   },
