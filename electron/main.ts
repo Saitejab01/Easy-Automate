@@ -1,6 +1,7 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, screen } from 'electron';
 import path from 'path';
 import { JsonDatabase } from './database';
+import { AutomationEngine } from './engine/automationEngine';
 
 let mainWindow: BrowserWindow | null = null;
 const db = new JsonDatabase();
@@ -572,6 +573,19 @@ ipcMain.handle('email:getSimulatedEmails', async (_event, toEmail?: string) => {
 // App lifecycle
 app.whenReady().then(() => {
   createWindow();
+
+  try {
+    const primary = screen.getPrimaryDisplay();
+    if (primary) {
+      AutomationEngine.setMachineScreenDimensions({
+        width: primary.workAreaSize.width,
+        height: primary.workAreaSize.height,
+        scaleFactor: primary.scaleFactor
+      });
+    }
+  } catch (err) {
+    console.warn('Could not cache machine screen dimensions:', err);
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

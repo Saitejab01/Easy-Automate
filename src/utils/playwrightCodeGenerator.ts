@@ -20,8 +20,8 @@ export function generatePlaywrightCode(
   lines.push(` */`);
   lines.push(`test('${scriptTitle}', async () => {`);
   lines.push(`  // 1. Launch Headful Browser`);
-  lines.push(`  const browser = await chromium.launch({ headless: false, slowMo: 400 });`);
-  lines.push(`  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });`);
+  lines.push(`  const browser = await chromium.launch({ headless: false, slowMo: 400, args: ['--window-size=1280,720', '--disable-blink-features=AutomationControlled'] });`);
+  lines.push(`  const context = await browser.newContext({ viewport: null });`);
   lines.push(`  const page = await context.newPage();`);
   lines.push(`  page.setDefaultTimeout(10000);`);
   lines.push(``);
@@ -69,7 +69,18 @@ export function generatePlaywrightCode(
           break;
         }
         case 'maximize_browser': {
-          lines.push(`  await page.setViewportSize({ width: 1920, height: 1080 });`);
+          lines.push(`  // Maximize browser window to fit machine dimensions without zoom variation`);
+          lines.push(`  try {`);
+          lines.push(`    const session = await context.newCDPSession(page);`);
+          lines.push(`    const { windowId } = await session.send('Browser.getWindowForTarget');`);
+          lines.push(`    await session.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'maximized' } });`);
+          lines.push(`    await session.send('Emulation.clearDeviceMetricsOverride');`);
+          lines.push(`    await session.send('Emulation.resetPageScaleFactor');`);
+          lines.push(`  } catch {`);
+          lines.push(`    const dims = await page.evaluate(() => ({ width: window.screen.availWidth || window.screen.width, height: window.screen.availHeight || window.screen.height }));`);
+          lines.push(`    await page.setViewportSize(dims);`);
+          lines.push(`  }`);
+          lines.push(`  await page.evaluate(() => { try { document.documentElement.style.zoom = '1'; } catch {} });`);
           break;
         }
         case 'refresh_page': {

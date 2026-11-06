@@ -14,6 +14,53 @@ export interface AutomationContext {
 }
 
 export class AutomationEngine {
+  private static cachedScreenDimensions: { width: number; height: number; scaleFactor?: number } | null = null;
+
+  public static setMachineScreenDimensions(dims: { width: number; height: number; scaleFactor?: number }): void {
+    this.cachedScreenDimensions = dims;
+  }
+
+  public static async getMachineScreenDimensions(page?: any): Promise<{ width: number; height: number; scaleFactor?: number }> {
+    if (this.cachedScreenDimensions && this.cachedScreenDimensions.width > 0 && this.cachedScreenDimensions.height > 0) {
+      return this.cachedScreenDimensions;
+    }
+
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const electron = require('electron');
+      const screenObj = electron.screen || (electron.default && electron.default.screen);
+      if (screenObj && typeof screenObj.getPrimaryDisplay === 'function') {
+        const primary = screenObj.getPrimaryDisplay();
+        if (primary && primary.workAreaSize && primary.workAreaSize.width > 0) {
+          const dims = {
+            width: primary.workAreaSize.width,
+            height: primary.workAreaSize.height,
+            scaleFactor: primary.scaleFactor || 1
+          };
+          this.cachedScreenDimensions = dims;
+          return dims;
+        }
+      }
+    } catch {
+      // Non-electron environment
+    }
+
+    if (page && !page.isClosed()) {
+      try {
+        const dims: any = await page.evaluate(
+          '({ width: window.screen.availWidth || window.screen.width, height: window.screen.availHeight || window.screen.height, scaleFactor: window.devicePixelRatio || 1 })'
+        );
+        if (dims && dims.width > 0 && dims.height > 0) {
+          return dims;
+        }
+      } catch {
+        // Fall through
+      }
+    }
+
+    return { width: 1920, height: 1080, scaleFactor: 1 };
+  }
+
   /**
    * Generates formatted Playwright TypeScript code corresponding to the automation script
    */
@@ -35,8 +82,8 @@ export class AutomationEngine {
     lines.push(` */`);
     lines.push(`test('${scriptTitle}', async () => {`);
     lines.push(`  // 1. Launch Browser`);
-    lines.push(`  const browser = await chromium.launch({ headless: false, slowMo: 300 });`);
-    lines.push(`  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });`);
+    lines.push(`  const browser = await chromium.launch({ headless: false, slowMo: 300, args: ['--window-size=1280,720', '--disable-blink-features=AutomationControlled'] });`);
+    lines.push(`  const context = await browser.newContext({ viewport: null });`);
     lines.push(`  const page = await context.newPage();`);
     lines.push(`  page.setDefaultTimeout(10000);`);
     lines.push(``);
@@ -89,7 +136,18 @@ export class AutomationEngine {
             break;
           }
           case 'maximize_browser': {
-            lines.push(`  await page.setViewportSize({ width: 1920, height: 1080 });`);
+            lines.push(`  // Maximize browser window to fit machine dimensions without zoom variation`);
+            lines.push(`  try {`);
+            lines.push(`    const session = await context.newCDPSession(page);`);
+            lines.push(`    const { windowId } = await session.send('Browser.getWindowForTarget');`);
+            lines.push(`    await session.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'maximized' } });`);
+            lines.push(`    await session.send('Emulation.clearDeviceMetricsOverride');`);
+            lines.push(`    await session.send('Emulation.resetPageScaleFactor');`);
+            lines.push(`  } catch {`);
+            lines.push(`    const dims = await page.evaluate(() => ({ width: window.screen.availWidth || window.screen.width, height: window.screen.availHeight || window.screen.height }));`);
+            lines.push(`    await page.setViewportSize(dims);`);
+            lines.push(`  }`);
+            lines.push(`  await page.evaluate(() => { try { document.documentElement.style.zoom = '1'; } catch {} });`);
             break;
           }
           case 'refresh_page': {
@@ -415,7 +473,7 @@ export class AutomationEngine {
           browser = await browserType.launch({
             headless: isHeadless,
             slowMo: delayMs,
-            args: ['--start-maximized', '--disable-blink-features=AutomationControlled']
+            args: ['--window-size=1280,720', '--disable-blink-features=AutomationControlled']
           });
         } catch (launchErr: any) {
           // If headful failed (e.g. no display server in background runner), retry headless
@@ -427,7 +485,7 @@ export class AutomationEngine {
         }
 
         browserContext = await browser.newContext({
-          viewport: { width: 1280, height: 800 }
+          viewport: null
         });
         page = await browserContext.newPage();
         page.setDefaultTimeout(waitTimeMs);
@@ -521,8 +579,44 @@ export class AutomationEngine {
             }
 
             case 'maximize_browser': {
-              await page.setViewportSize({ width: 1920, height: 1080 });
-              logs.push(`[${new Date().toLocaleTimeString()}] Browser window maximized (1920x1080)`);
+              if (!page || page.isClosed()) {
+                await ensureBrowserReady();
+              }
+              const dims = await AutomationEngine.getMachineScreenDimensions(page);
+              let maximizedViaCdp = false;
+              try {
+                const session = await page.context().newCDPSession(page);
+                const { windowId } = await session.send('Browser.getWindowForTarget');
+                if (windowId !== undefined) {
+                  await session.send('Browser.setWindowBounds', {
+                    windowId,
+                    bounds: { windowState: 'maximized' }
+                  });
+                  // Clear any device emulation / zoom overrides so that page fits 100% naturally without zoom scaling
+                  await session.send('Emulation.clearDeviceMetricsOverride').catch(() => {});
+                  await session.send('Emulation.resetPageScaleFactor').catch(() => {});
+                  maximizedViaCdp = true;
+                }
+              } catch (cdpErr: any) {
+                console.warn('CDP maximize windowState failed or not supported:', cdpErr?.message);
+              }
+
+              if (!maximizedViaCdp) {
+                try {
+                  await page.setViewportSize({ width: dims.width, height: dims.height });
+                } catch (vpErr: any) {
+                  console.warn('Could not set viewport size:', vpErr?.message);
+                }
+              }
+
+              // Ensure 100% native zoom with no CSS zoom variation
+              try {
+                await page.evaluate(
+                  'try { if (document.documentElement) document.documentElement.style.zoom = "1"; if (document.body) document.body.style.zoom = "1"; } catch {}'
+                );
+              } catch {}
+
+              logs.push(`[${new Date().toLocaleTimeString()}] Browser window maximized to fit machine display (${dims.width}x${dims.height}) with 100% native zoom`);
               break;
             }
 

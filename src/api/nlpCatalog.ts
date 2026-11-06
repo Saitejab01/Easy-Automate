@@ -56,7 +56,7 @@ export const NLP_CATALOG: NlpDefinition[] = [
     id: 'maximize_browser',
     name: 'Maximize Browser',
     category: 'Browser',
-    description: 'Maximize the browser window to full viewport',
+    description: 'Maximize the browser window to fit the machine dimensions with 100% native zoom without scaling variation',
     requiresElement: false,
     requiredParams: []
   },

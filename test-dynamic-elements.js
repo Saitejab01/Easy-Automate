@@ -129,6 +129,18 @@ assert.strictEqual(
   "//div[@data-category='smartphones']//button[@id='btn-Samsung Galaxy S24']"
 );
 
-console.log('===================================================================');
-console.log('  ALL DYNAMIC ELEMENT & VALUE REPLACEMENT TESTS PASSED!            ');
-console.log('===================================================================');
+// Test Case 6: Machine Screen Dimensions detection & maximize fitting
+console.log('9. Testing Machine Screen Dimensions Detection...');
+AutomationEngine.setMachineScreenDimensions({ width: 1536, height: 864, scaleFactor: 1.25 });
+(async () => {
+  const dims = await AutomationEngine.getMachineScreenDimensions();
+  console.log('   Retrieved Machine Dimensions:', dims);
+  assert.strictEqual(dims.width, 1536, 'Width should match machine work area');
+  assert.strictEqual(dims.height, 864, 'Height should match machine work area');
+  assert.strictEqual(dims.scaleFactor, 1.25, 'Scale factor should match machine scale factor');
+
+  console.log('===================================================================');
+  console.log('  ALL DYNAMIC ELEMENT & MAXIMIZE DIMENSION TESTS PASSED!           ');
+  console.log('===================================================================');
+})();
+
