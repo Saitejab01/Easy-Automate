@@ -147,8 +147,6 @@ export const ElementDrawer: React.FC<ElementDrawerProps> = ({
     setSyncConflictModal(null);
   }, [elementToEdit, selectedPageId, isOpen]);
 
-  if (!isOpen) return null;
-
   // Add another locator row
   const handleAddLocator = () => {
     const nextType: LocatorType =
@@ -497,6 +495,8 @@ export const ElementDrawer: React.FC<ElementDrawerProps> = ({
       setIsSubmitting(false);
     }
   };
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 overflow-hidden bg-black/60 backdrop-blur-sm flex justify-end animate-fadeIn">

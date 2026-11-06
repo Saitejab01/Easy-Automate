@@ -56,10 +56,6 @@ export const RepositoryView: React.FC<RepositoryViewProps> = ({ project }) => {
     name: string;
   } | null>(null);
 
-  useEffect(() => {
-    loadRepository();
-  }, [project.id]);
-
   const loadRepository = async () => {
     setIsLoading(true);
     try {
@@ -93,6 +89,10 @@ export const RepositoryView: React.FC<RepositoryViewProps> = ({ project }) => {
       setIsLoading(false);
     }
   };
+
+  useEffect(() => {
+    loadRepository();
+  }, [project.id]);
 
   // Toggle page expanded/collapsed
   const toggleExpand = (pageId: string) => {
@@ -621,33 +621,37 @@ export const RepositoryView: React.FC<RepositoryViewProps> = ({ project }) => {
       </div>
 
       {/* Right-side Slider/Drawer (Section 3.3) */}
-      <ElementDrawer
-        isOpen={isDrawerOpen}
-        onClose={() => {
-          setIsDrawerOpen(false);
-          setElementToEdit(null);
-        }}
-        pages={pages}
-        selectedPageId={selectedPageId}
-        elementToEdit={elementToEdit}
-        existingElements={elements}
-        onSave={handleSaveElement}
-        onOpenFinder={() => {
-          setIsDrawerOpen(false);
-          setIsFinderOpen(true);
-        }}
-      />
+      {isDrawerOpen && (
+        <ElementDrawer
+          isOpen={isDrawerOpen}
+          onClose={() => {
+            setIsDrawerOpen(false);
+            setElementToEdit(null);
+          }}
+          pages={pages}
+          selectedPageId={selectedPageId}
+          elementToEdit={elementToEdit}
+          existingElements={elements}
+          onSave={handleSaveElement}
+          onOpenFinder={() => {
+            setIsDrawerOpen(false);
+            setIsFinderOpen(true);
+          }}
+        />
+      )}
 
       {/* Interactive Locator Finder & Inspector Modal */}
-      <LocatorFinderModal
-        isOpen={isFinderOpen}
-        onClose={() => setIsFinderOpen(false)}
-        project={project}
-        pages={pages}
-        selectedPageId={selectedPageId}
-        existingElements={elements}
-        onSaveElement={handleSaveElement}
-      />
+      {isFinderOpen && (
+        <LocatorFinderModal
+          isOpen={isFinderOpen}
+          onClose={() => setIsFinderOpen(false)}
+          project={project}
+          pages={pages}
+          selectedPageId={selectedPageId}
+          existingElements={elements}
+          onSaveElement={handleSaveElement}
+        />
+      )}
 
       {/* Create Page / Subpage Modal */}
       {isCreatePageModalOpen && (

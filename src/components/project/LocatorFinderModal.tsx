@@ -153,28 +153,6 @@ export const LocatorFinderModal: React.FC<LocatorFinderModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
 
-  // Sync state when opening
-  useEffect(() => {
-    if (isOpen) {
-      setTargetPageId(selectedPageId || ((pages && pages[0]?.id) || ''));
-      setInspectUrl(project?.baseUrl || 'https://demo.playwright.dev');
-      loadSample(SAMPLE_ELEMENTS[0]);
-    }
-  }, [isOpen, selectedPageId, pages, project?.baseUrl]);
-
-  // Regenerate strategies whenever inspection attributes change
-  useEffect(() => {
-    generateAllStrategies();
-  }, [tag, idAttr, nameAttr, testIdAttr, classAttr, textAttr, placeholderAttr, ariaLabelAttr]);
-
-  if (!isOpen) return null;
-
-  // Check if element with this name already exists in target page (Requirement 3: Synchronization)
-  const safeExisting = Array.isArray(existingElements) ? existingElements : [];
-  const existingDuplicate = safeExisting.find(
-    e => e && e.pageId === targetPageId && (e.name || '').trim().toLowerCase() === (elementName || '').trim().toLowerCase()
-  );
-
   const loadSample = (sample: typeof SAMPLE_ELEMENTS[0]) => {
     setElementName(sample.name);
     setElementType(sample.type);
@@ -267,6 +245,28 @@ export const LocatorFinderModal: React.FC<LocatorFinderModalProps> = ({
 
     setGeneratedStrategies(mapped);
   };
+
+  // Sync state when opening
+  useEffect(() => {
+    if (isOpen) {
+      setTargetPageId(selectedPageId || ((pages && pages[0]?.id) || ''));
+      setInspectUrl(project?.baseUrl || 'https://demo.playwright.dev');
+      loadSample(SAMPLE_ELEMENTS[0]);
+    }
+  }, [isOpen, selectedPageId, pages, project?.baseUrl]);
+
+  // Regenerate strategies whenever inspection attributes change
+  useEffect(() => {
+    if (isOpen) {
+      generateAllStrategies();
+    }
+  }, [isOpen, tag, idAttr, nameAttr, testIdAttr, classAttr, textAttr, placeholderAttr, ariaLabelAttr]);
+
+  // Check if element with this name already exists in target page (Requirement 3: Synchronization)
+  const safeExisting = Array.isArray(existingElements) ? existingElements : [];
+  const existingDuplicate = safeExisting.find(
+    e => e && e.pageId === targetPageId && (e.name || '').trim().toLowerCase() === (elementName || '').trim().toLowerCase()
+  );
 
   // Launch live Playwright browser inspector
   const handleLaunchLiveInspector = async () => {
@@ -418,6 +418,8 @@ export const LocatorFinderModal: React.FC<LocatorFinderModalProps> = ({
       setIsSubmitting(false);
     }
   };
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 overflow-hidden bg-black/75 backdrop-blur-md flex items-center justify-center p-4 animate-fadeIn">
