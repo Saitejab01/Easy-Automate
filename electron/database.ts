@@ -490,7 +490,22 @@ export class JsonDatabase {
 
       this.data.users.push(demoUser);
       this.data.projects.push(...demoProjects);
+      for (const p of demoProjects) {
+        this.seedProjectRepository(p.id);
+        this.seedProjectExecutions(p.id);
+        this.seedProjectTestData(p.id, demoUser.email);
+        this.seedProjectScripts(p.id, demoUser.email);
+      }
       hasChanges = true;
+    }
+
+    // Ensure demo projects have repository pages if missing
+    for (const p of this.data.projects) {
+      const pPages = this.data.pages.filter(page => page.projectId === p.id);
+      if (pPages.length === 0 && (p.id === 'proj_ecommerce_01' || p.id === 'proj_crm_portal_02')) {
+        this.seedProjectRepository(p.id);
+        hasChanges = true;
+      }
     }
 
     if (hasChanges) {

@@ -68,21 +68,25 @@ export const RepositoryView: React.FC<RepositoryViewProps> = ({ project }) => {
         api.repository.getElements(project.id)
       ]);
 
-      if (pagesRes.success && pagesRes.pages) {
-        setPages(pagesRes.pages);
-        // Expand root pages by default
-        const rootIds = new Set(pagesRes.pages.filter(p => !p.parentId).map(p => p.id));
-        setExpandedPageIds(rootIds);
+      const loadedPages = (pagesRes && pagesRes.success && Array.isArray(pagesRes.pages))
+        ? pagesRes.pages
+        : [];
+      const loadedElements = (elementsRes && elementsRes.success && Array.isArray(elementsRes.elements))
+        ? elementsRes.elements
+        : [];
 
-        // Select first page if none selected
-        if (!selectedPageId && pagesRes.pages.length > 0) {
-          setSelectedPageId(pagesRes.pages[0].id);
-        }
-      }
+      setPages(loadedPages);
+      setElements(loadedElements);
 
-      if (elementsRes.success && elementsRes.elements) {
-        setElements(elementsRes.elements);
-      }
+      // Expand root pages by default
+      const rootIds = new Set(loadedPages.filter(p => p && !p.parentId).map(p => p.id));
+      setExpandedPageIds(rootIds);
+
+      // Select first page if none selected
+      setSelectedPageId(prev => {
+        if (prev && loadedPages.some(p => p && p.id === prev)) return prev;
+        return loadedPages[0]?.id || '';
+      });
     } catch (err) {
       console.error('Failed to load repository:', err);
     } finally {
@@ -102,29 +106,38 @@ export const RepositoryView: React.FC<RepositoryViewProps> = ({ project }) => {
   };
 
   const expandAll = () => {
-    setExpandedPageIds(new Set(pages.map(p => p.id)));
+    setExpandedPageIds(new Set((pages || []).map(p => p.id)));
   };
 
   const collapseAll = () => {
     setExpandedPageIds(new Set());
   };
 
+  const safePages = Array.isArray(pages) ? pages : [];
+  const safeElements = Array.isArray(elements) ? elements : [];
+
   // Build hierarchical tree
-  const rootPages = pages.filter(p => !p.parentId);
-  const getSubpages = (parentId: string) => pages.filter(p => p.parentId === parentId);
-  const getPageElements = (pageId: string) => elements.filter(e => e.pageId === pageId);
+  const rootPages = safePages.filter(p => p && !p.parentId);
+  const getSubpages = (parentId: string) => safePages.filter(p => p && p.parentId === parentId);
+  const getPageElements = (pageId: string) => safeElements.filter(e => e && e.pageId === pageId);
 
   // Selected Page Info & Elements
-  const selectedPage = pages.find(p => p.id === selectedPageId) || pages[0];
+  const selectedPage = safePages.find(p => p && p.id === selectedPageId) || safePages[0] || null;
   const activeElements = selectedPage
-    ? elements.filter(e => e.pageId === selectedPage.id)
+    ? safeElements.filter(e => e && e.pageId === selectedPage.id)
     : [];
 
-  const filteredElements = activeElements.filter(e =>
-    e.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    e.type.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    e.locators.some(l => l.value.toLowerCase().includes(searchQuery.toLowerCase()))
-  );
+  const filteredElements = activeElements.filter(e => {
+    if (!e) return false;
+    const q = (searchQuery || '').trim().toLowerCase();
+    if (!q) return true;
+    const nameMatch = (e.name || '').toLowerCase().includes(q);
+    const typeMatch = (e.type || '').toLowerCase().includes(q);
+    const locatorsMatch = Array.isArray(e.locators) && e.locators.some(l =>
+      l && typeof l.value === 'string' && l.value.toLowerCase().includes(q)
+    );
+    return nameMatch || typeMatch || locatorsMatch;
+  });
 
   // Create Page / Subpage
   const handleOpenCreatePage = (parentId?: string | null) => {
@@ -230,10 +243,13 @@ export const RepositoryView: React.FC<RepositoryViewProps> = ({ project }) => {
   };
 
   // Render tree item recursively
-  const renderTreePage = (page: RepositoryPage, depth = 0) => {
+  const renderTreePage = (page: RepositoryPage, depth = 0, visited = new Set<string>()) => {
+    if (!page || !page.id || visited.has(page.id) || depth > 15) return null;
+    visited.add(page.id);
+
     const subpages = getSubpages(page.id);
     const pageElems = getPageElements(page.id);
-    const isExpanded = expandedPageIds.has(page.id);
+    const isExpanded = expandedPageIds instanceof Set ? expandedPageIds.has(page.id) : false;
     const isSelected = selectedPageId === page.id;
 
     return (
@@ -264,7 +280,7 @@ export const RepositoryView: React.FC<RepositoryViewProps> = ({ project }) => {
             )}
 
             <Folder className={`w-3.5 h-3.5 shrink-0 ${isSelected ? 'text-brand-400' : 'text-slate-500'}`} />
-            <span className="truncate">{page.name}</span>
+            <span className="truncate">{page.name || 'Unnamed Page'}</span>
           </div>
 
           <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -311,7 +327,7 @@ export const RepositoryView: React.FC<RepositoryViewProps> = ({ project }) => {
         {/* Nested Subpages */}
         {isExpanded && subpages.length > 0 && (
           <div className="space-y-0.5 mt-0.5">
-            {subpages.map(sub => renderTreePage(sub, depth + 1))}
+            {subpages.map(sub => renderTreePage(sub, depth + 1, visited))}
           </div>
         )}
       </div>
@@ -464,12 +480,14 @@ export const RepositoryView: React.FC<RepositoryViewProps> = ({ project }) => {
               <div className="text-center py-20 px-4 border border-dashed border-slate-800 rounded-2xl bg-slate-950/40">
                 <Component className="w-12 h-12 text-slate-600 mx-auto mb-3 stroke-[1.5]" />
                 <h3 className="text-sm font-semibold text-slate-200">
-                  {searchQuery ? 'No matching elements found' : 'No elements in this page yet'}
+                  {searchQuery ? 'No matching elements found' : (selectedPage ? 'No elements in this page yet' : 'No pages created yet')}
                 </h3>
                 <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
                   {searchQuery
                     ? `No element matched "${searchQuery}". Try a different search keyword.`
-                    : 'Add UI element locators (Buttons, Input Fields, Links) to start building automation scripts.'}
+                    : (selectedPage
+                        ? 'Add UI element locators (Buttons, Input Fields, Links) to start building automation scripts.'
+                        : 'Create your first page from the sidebar or click "New Root Page" to begin structuring your application repository.')}
                 </p>
                 {!searchQuery && selectedPage && (
                   <div className="mt-5 flex items-center justify-center gap-3">
@@ -492,11 +510,24 @@ export const RepositoryView: React.FC<RepositoryViewProps> = ({ project }) => {
                     </button>
                   </div>
                 )}
+                {!searchQuery && !selectedPage && (
+                  <div className="mt-5 flex items-center justify-center">
+                    <button
+                      onClick={() => handleOpenCreatePage(null)}
+                      className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold bg-brand-600 hover:bg-brand-500 text-white shadow-md transition-all"
+                    >
+                      <FolderPlus className="w-4 h-4" />
+                      <span>Create New Root Page</span>
+                    </button>
+                  </div>
+                )}
               </div>
             ) : (
               filteredElements.map((el) => {
-                const primaryLocator = el.locators.find(l => l.isPrimary) || el.locators[0];
-                const hasDynamic = el.locators.some(l => l.valueType === 'Dynamic');
+                if (!el) return null;
+                const locators = Array.isArray(el.locators) ? el.locators : [];
+                const primaryLocator = locators.find(l => l && l.isPrimary) || locators[0] || null;
+                const hasDynamic = locators.some(l => l && (l.valueType === 'Dynamic' || /\{[^}]+\}/.test(l.value || '')));
 
                 return (
                   <div
@@ -507,9 +538,9 @@ export const RepositoryView: React.FC<RepositoryViewProps> = ({ project }) => {
                     <div className="flex items-start justify-between gap-4">
                       <div>
                         <div className="flex items-center gap-2">
-                          <h4 className="text-sm font-bold text-white tracking-tight">{el.name}</h4>
+                          <h4 className="text-sm font-bold text-white tracking-tight">{el.name || 'Unnamed Element'}</h4>
                           <span className="text-[10px] font-semibold text-brand-400 bg-brand-500/10 border border-brand-500/20 px-2 py-0.5 rounded-full">
-                            {el.type}
+                            {el.type || 'Custom'}
                           </span>
                           {hasDynamic && (
                             <span className="text-[10px] font-semibold text-purple-400 bg-purple-500/10 border border-purple-500/20 px-2 py-0.5 rounded-full flex items-center gap-1">
@@ -537,7 +568,7 @@ export const RepositoryView: React.FC<RepositoryViewProps> = ({ project }) => {
                         </button>
                         <button
                           type="button"
-                          onClick={() => setItemToDelete({ type: 'element', id: el.id, name: el.name })}
+                          onClick={() => setItemToDelete({ type: 'element', id: el.id, name: el.name || 'Element' })}
                           className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
                           title="Delete Element"
                         >
@@ -551,9 +582,9 @@ export const RepositoryView: React.FC<RepositoryViewProps> = ({ project }) => {
                       <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800/80 flex items-center justify-between text-xs font-mono">
                         <div className="flex items-center gap-2 truncate">
                           <span className="px-1.5 py-0.5 bg-slate-800 text-slate-300 rounded text-[10px] font-semibold">
-                            {primaryLocator.type}
+                            {primaryLocator.type || 'Locator'}
                           </span>
-                          <span className="text-brand-300 truncate">{primaryLocator.value}</span>
+                          <span className="text-brand-300 truncate">{primaryLocator.value || ''}</span>
                         </div>
                         <span className="text-[10px] text-slate-500 uppercase font-sans font-medium">
                           Primary
@@ -562,20 +593,23 @@ export const RepositoryView: React.FC<RepositoryViewProps> = ({ project }) => {
                     )}
 
                     {/* Other Configured Locators preview if multiple */}
-                    {el.locators.length > 1 && (
+                    {locators.length > 1 && (
                       <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400 pt-1">
-                        <span className="text-slate-500">Other Locators ({el.locators.length - 1}):</span>
-                        {el.locators
-                          .filter(l => !l.isPrimary && l.id !== primaryLocator?.id)
-                          .map((l, i) => (
-                            <span
-                              key={i}
-                              className="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 font-mono text-[10px]"
-                            >
-                              <strong>{l.type}:</strong> {l.value.slice(0, 32)}
-                              {l.value.length > 32 ? '...' : ''}
-                            </span>
-                          ))}
+                        <span className="text-slate-500">Other Locators ({locators.length - 1}):</span>
+                        {locators
+                          .filter(l => l && !l.isPrimary && l.id !== primaryLocator?.id)
+                          .map((l, i) => {
+                            const val = typeof l.value === 'string' ? l.value : String(l.value || '');
+                            return (
+                              <span
+                                key={l.id || i}
+                                className="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 font-mono text-[10px]"
+                              >
+                                <strong>{l.type || 'Locator'}:</strong> {val.slice(0, 32)}
+                                {val.length > 32 ? '...' : ''}
+                              </span>
+                            );
+                          })}
                       </div>
                     )}
                   </div>

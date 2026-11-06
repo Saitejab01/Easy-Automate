@@ -16,6 +16,7 @@ import {
   TestDataFoldersResponse,
   TestDataFilesResponse
 } from './types';
+import { evaluateLocatorStability } from '../utils/locatorEvaluator';
 
 const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI;
 
@@ -877,7 +878,6 @@ export const api = {
         return (window as any).electronAPI.repository.testLocator(locatorType, locatorValue);
       }
       try {
-        const { evaluateLocatorStability } = await import('../utils/locatorEvaluator');
         const stability = evaluateLocatorStability(locatorType, locatorValue);
         return { success: true, matchCount: -1, stability };
       } catch (err: any) {

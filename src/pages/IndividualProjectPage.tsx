@@ -31,6 +31,7 @@ import { TestDataView } from '../components/project/TestDataView';
 import { ScriptsView } from '../components/project/ScriptsView';
 import { ExecutionView } from '../components/project/ExecutionView';
 import { PlaceholderView } from '../components/project/PlaceholderView';
+import { ErrorBoundary } from '../components/common/ErrorBoundary';
 
 type WorkspaceSection = 'dashboard' | 'repository' | 'test-data' | 'scripts' | 'execution' | 'suites' | 'settings';
 
@@ -307,16 +308,17 @@ export const IndividualProjectPage: React.FC = () => {
 
       {/* Main Content Area */}
       <main className="flex-1 overflow-y-auto bg-slate-950">
-        {activeSection === 'dashboard' && (
-          <DashboardView
-            project={project}
-            onNavigateToRepository={() => setActiveSection('repository')}
-          />
-        )}
+        <ErrorBoundary fallbackTitle="Error loading workspace section" onReset={() => setActiveSection('dashboard')}>
+          {activeSection === 'dashboard' && (
+            <DashboardView
+              project={project}
+              onNavigateToRepository={() => setActiveSection('repository')}
+            />
+          )}
 
-        {activeSection === 'repository' && <RepositoryView project={project} />}
+          {activeSection === 'repository' && <RepositoryView project={project} />}
 
-        {activeSection === 'test-data' && <TestDataView project={project} />}
+          {activeSection === 'test-data' && <TestDataView project={project} />}
 
         {activeSection === 'scripts' && (
           <ScriptsView
@@ -431,6 +433,7 @@ export const IndividualProjectPage: React.FC = () => {
             </form>
           </div>
         )}
+        </ErrorBoundary>
       </main>
     </div>
   );

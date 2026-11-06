@@ -126,7 +126,7 @@ export const ElementDrawer: React.FC<ElementDrawerProps> = ({
       setDescription(elementToEdit.description || '');
       setPageId(elementToEdit.pageId);
       setLocators(
-        elementToEdit.locators.map((l, idx) => ({
+        (elementToEdit.locators || []).map((l, idx) => ({
           ...l,
           priority: l.priority || idx + 1,
           isPrimary: idx === 0
@@ -447,7 +447,7 @@ export const ElementDrawer: React.FC<ElementDrawerProps> = ({
     // If not editing this element and an element with the exact name exists in the page
     if (!elementToEdit && !forceNew && existingElements && existingElements.length > 0) {
       const duplicate = existingElements.find(
-        el => el.pageId === pageId && el.name.trim().toLowerCase() === payload.name.toLowerCase()
+        el => el && el.pageId === pageId && (el.name || '').trim().toLowerCase() === (payload.name || '').trim().toLowerCase()
       );
       if (duplicate) {
         setSyncConflictModal({
@@ -546,7 +546,7 @@ export const ElementDrawer: React.FC<ElementDrawerProps> = ({
               onChange={(e) => setPageId(e.target.value)}
               className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 focus:border-brand-500 text-slate-200 text-xs font-medium"
             >
-              {pages.map((p) => (
+              {(pages || []).map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.parentId ? `↳  ${p.name} (Subpage)` : `📄 ${p.name}`}
                 </option>
@@ -645,7 +645,7 @@ export const ElementDrawer: React.FC<ElementDrawerProps> = ({
             {/* List of Locators */}
             <div className="space-y-4">
               {locators.map((loc, idx) => {
-                const detectedPlaceholders = extractPlaceholders(loc.value);
+                const detectedPlaceholders = extractPlaceholders(loc?.value || '');
                 const isSuggestionOpen = activeSuggestionIdx === idx;
                 const testResult = locatorTestResults[idx];
                 const isTesting = testingLocatorIdx === idx;

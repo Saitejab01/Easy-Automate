@@ -130,8 +130,8 @@ export const LocatorFinderModal: React.FC<LocatorFinderModalProps> = ({
   existingElements,
   onSaveElement
 }) => {
-  const [inspectUrl, setInspectUrl] = useState(project.baseUrl || 'https://demo.playwright.dev');
-  const [targetPageId, setTargetPageId] = useState(selectedPageId || (pages[0]?.id || ''));
+  const [inspectUrl, setInspectUrl] = useState(project?.baseUrl || 'https://demo.playwright.dev');
+  const [targetPageId, setTargetPageId] = useState(selectedPageId || ((pages && pages[0]?.id) || ''));
   const [elementName, setElementName] = useState('Login Submit Button');
   const [elementType, setElementType] = useState<ElementType>('Button');
   const [elementDescription, setElementDescription] = useState('Primary action button captured with Locator Finder');
@@ -156,11 +156,11 @@ export const LocatorFinderModal: React.FC<LocatorFinderModalProps> = ({
   // Sync state when opening
   useEffect(() => {
     if (isOpen) {
-      setTargetPageId(selectedPageId || (pages[0]?.id || ''));
-      setInspectUrl(project.baseUrl || 'https://demo.playwright.dev');
+      setTargetPageId(selectedPageId || ((pages && pages[0]?.id) || ''));
+      setInspectUrl(project?.baseUrl || 'https://demo.playwright.dev');
       loadSample(SAMPLE_ELEMENTS[0]);
     }
-  }, [isOpen, selectedPageId, pages, project.baseUrl]);
+  }, [isOpen, selectedPageId, pages, project?.baseUrl]);
 
   // Regenerate strategies whenever inspection attributes change
   useEffect(() => {
@@ -170,8 +170,9 @@ export const LocatorFinderModal: React.FC<LocatorFinderModalProps> = ({
   if (!isOpen) return null;
 
   // Check if element with this name already exists in target page (Requirement 3: Synchronization)
-  const existingDuplicate = existingElements.find(
-    e => e.pageId === targetPageId && e.name.trim().toLowerCase() === elementName.trim().toLowerCase()
+  const safeExisting = Array.isArray(existingElements) ? existingElements : [];
+  const existingDuplicate = safeExisting.find(
+    e => e && e.pageId === targetPageId && (e.name || '').trim().toLowerCase() === (elementName || '').trim().toLowerCase()
   );
 
   const loadSample = (sample: typeof SAMPLE_ELEMENTS[0]) => {
@@ -568,7 +569,7 @@ export const LocatorFinderModal: React.FC<LocatorFinderModalProps> = ({
                 onChange={(e) => setTargetPageId(e.target.value)}
                 className="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-200 text-xs font-medium focus:border-brand-500"
               >
-                {pages.map(p => (
+                {(pages || []).map(p => (
                   <option key={p.id} value={p.id}>
                     {p.parentId ? `↳ ${p.name} (Subpage)` : `📄 ${p.name}`}
                   </option>
@@ -797,3 +798,4 @@ export const LocatorFinderModal: React.FC<LocatorFinderModalProps> = ({
     </div>
   );
 };
+
