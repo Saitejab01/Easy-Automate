@@ -95,6 +95,43 @@ export interface Locator {
   priority?: number;
 }
 
+export interface FinderStrategy {
+  id: string;
+  type: LocatorType;
+  value: string;
+  valueType: ValueType;
+  isPrimary: boolean;
+  priority: number;
+  selected: boolean;
+  stabilityScore: number;
+  stability: 'High' | 'Moderate' | 'Low';
+  reasons: string[];
+  feedback: string;
+  matchCount: number;
+}
+
+export interface FinderCapturedElement {
+  id: string;
+  sequence: number;
+  name: string;
+  type: ElementType;
+  tag: string;
+  visibleText?: string;
+  accessibleName?: string;
+  description?: string;
+  locators: FinderStrategy[];
+  primaryLocatorId: string;
+  targetPageId?: string;
+  referenceMode?: boolean;
+  referenceData?: {
+    refTag: string;
+    refText: string;
+    refId: string;
+  };
+  pushed?: boolean;
+  capturedAt: string;
+}
+
 export interface RepositoryElement {
   id: string;
   projectId: string;

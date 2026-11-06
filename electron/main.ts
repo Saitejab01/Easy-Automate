@@ -3,6 +3,7 @@ import path from 'path';
 import { JsonDatabase } from './database';
 import { AutomationEngine } from './engine/automationEngine';
 import { evaluateLocatorStability } from './locatorEvaluator';
+import { finderSession } from './finderSession';
 
 let mainWindow: BrowserWindow | null = null;
 const db = new JsonDatabase();
@@ -48,7 +49,10 @@ function createWindow() {
 
   mainWindow.on('closed', () => {
     mainWindow = null;
+    finderSession.setMainWindow(null);
   });
+
+  finderSession.setMainWindow(mainWindow);
 }
 
 // Window control handlers
@@ -244,160 +248,43 @@ ipcMain.handle('repository:testLocator', async (_event, { locatorType, locatorVa
   }
 });
 
-// Interactive Locator Finder live element inspection
+// Interactive Locator Finder persistent element inspection & capture session
 ipcMain.handle('repository:inspectElement', async (_event, { url }: { url: string }) => {
-  let playwright: any = null;
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    playwright = require('playwright');
-  } catch {}
+  return await finderSession.startSession(url, 'chromium', 'normal');
+});
 
-  if (!playwright) {
-    return { success: false, error: 'Playwright engine not available' };
-  }
+// ================= Finder Session IPC Handlers ================= //
+ipcMain.handle('finder:startSession', async (_event, { url, browserType, captureMode }: { url: string; browserType?: 'chromium' | 'firefox' | 'webkit'; captureMode?: 'normal' | 'reference' }) => {
+  return await finderSession.startSession(url, browserType, captureMode);
+});
 
-  let browser: any = null;
-  try {
-    browser = await playwright.chromium.launch({
-      headless: false,
-      args: ['--window-size=1280,800', '--disable-blink-features=AutomationControlled']
-    });
-    const context = await browser.newContext({ viewport: null });
-    const page = await context.newPage();
+ipcMain.handle('finder:pauseCapture', async () => {
+  return await finderSession.pauseCapture();
+});
 
-    let cleanUrl = (url || '').trim();
-    if (!cleanUrl) cleanUrl = 'https://demo.playwright.dev';
-    if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
-      cleanUrl = 'https://' + cleanUrl;
-    }
+ipcMain.handle('finder:resumeCapture', async () => {
+  return await finderSession.resumeCapture();
+});
 
-    await page.goto(cleanUrl, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
+ipcMain.handle('finder:closeSession', async () => {
+  return await finderSession.closeSession();
+});
 
-    return await new Promise((resolve) => {
-      let resolved = false;
+ipcMain.handle('finder:testLocator', async (_event, { locatorType, locatorValue }: { locatorType: string; locatorValue: string }) => {
+  return await finderSession.testLocator(locatorType, locatorValue);
+});
 
-      page.exposeFunction('onElementInspected', async (data: any) => {
-        if (!resolved) {
-          resolved = true;
-          try {
-            await browser.close();
-          } catch {}
-          resolve({ success: true, element: data });
-        }
-      }).catch(() => {});
+ipcMain.handle('finder:highlightLocator', async (_event, { locatorType, locatorValue }: { locatorType: string; locatorValue: string }) => {
+  return await finderSession.highlightLocator(locatorType, locatorValue);
+});
 
-      browser.on('disconnected', () => {
-        if (!resolved) {
-          resolved = true;
-          resolve({ success: false, error: 'Inspection browser closed' });
-        }
-      });
+ipcMain.handle('finder:setCaptureMode', async (_event, mode: 'normal' | 'reference') => {
+  finderSession.setCaptureMode(mode);
+  return { success: true };
+});
 
-      page.evaluate(`
-        (() => {
-          const banner = document.createElement('div');
-          banner.id = '__ea_inspector_banner';
-          banner.style.position = 'fixed';
-          banner.style.top = '14px';
-          banner.style.left = '50%';
-          banner.style.transform = 'translateX(-50%)';
-          banner.style.zIndex = '9999999';
-          banner.style.background = '#090d16';
-          banner.style.color = '#38bdf8';
-          banner.style.border = '2px solid #38bdf8';
-          banner.style.borderRadius = '12px';
-          banner.style.padding = '8px 20px';
-          banner.style.fontFamily = 'system-ui, sans-serif';
-          banner.style.fontSize = '13px';
-          banner.style.fontWeight = 'bold';
-          banner.style.boxShadow = '0 10px 30px rgba(0,0,0,0.8)';
-          banner.style.pointerEvents = 'none';
-          banner.innerText = '🎯 Easy Automate Locator Finder: Click any element to capture locators';
-          document.body.appendChild(banner);
-
-          let prevTarget = null;
-          let prevOutline = '';
-
-          document.addEventListener('mouseover', (e) => {
-            if (e.target.id === '__ea_inspector_banner') return;
-            if (prevTarget && prevTarget !== e.target) {
-              prevTarget.style.outline = prevOutline;
-            }
-            prevTarget = e.target;
-            prevOutline = e.target.style.outline;
-            e.target.style.outline = '3px solid #38bdf8';
-          }, true);
-
-          document.addEventListener('click', (e) => {
-            if (e.target.id === '__ea_inspector_banner') return;
-            e.preventDefault();
-            e.stopPropagation();
-
-            const el = e.target;
-            const tagName = el.tagName.toLowerCase();
-            const textContent = (el.innerText || el.textContent || '').trim().slice(0, 100);
-            const id = el.id || '';
-            const name = el.getAttribute('name') || '';
-            const testId = el.getAttribute('data-testid') || el.getAttribute('data-test') || el.getAttribute('data-cy') || '';
-            const className = (el.className || '').toString().trim();
-            const placeholder = el.getAttribute('placeholder') || '';
-            const role = el.getAttribute('role') || '';
-            const type = el.getAttribute('type') || '';
-            const ariaLabel = el.getAttribute('aria-label') || '';
-
-            let xpath = '//' + tagName;
-            if (id) {
-              xpath += '[@id="' + id + '"]';
-            } else if (testId) {
-              xpath += '[@data-testid="' + testId + '"]';
-            } else if (name) {
-              xpath += '[@name="' + name + '"]';
-            } else if (textContent) {
-              xpath += '[contains(., "' + textContent.slice(0, 30).replace(/"/g, '') + '")]';
-            }
-
-            let cssSelector = tagName;
-            if (id) {
-              cssSelector = '#' + id;
-            } else if (testId) {
-              cssSelector = '[data-testid="' + testId + '"]';
-            } else if (name) {
-              cssSelector = tagName + '[name="' + name + '"]';
-            } else if (className) {
-              const cleanClasses = className.split(/\\s+/).slice(0, 2).join('.');
-              cssSelector = tagName + '.' + cleanClasses;
-            }
-
-            const capturedData = {
-              tagName,
-              textContent,
-              id,
-              name,
-              testId,
-              className,
-              placeholder,
-              role,
-              type,
-              ariaLabel,
-              xpath,
-              cssSelector
-            };
-
-            if (window.onElementInspected) {
-              window.onElementInspected(capturedData);
-            }
-          }, true);
-        })()
-      `).catch(() => {});
-    });
-  } catch (err: any) {
-    if (browser) {
-      try {
-        await browser.close();
-      } catch {}
-    }
-    return { success: false, error: err.message || 'Inspection failed' };
-  }
+ipcMain.handle('finder:getStatus', async () => {
+  return finderSession.getStatus();
 });
 
 // ================= Stage 2: Dashboard IPC Handlers ================= //
@@ -758,6 +645,12 @@ app.whenReady().then(() => {
       createWindow();
     }
   });
+});
+
+app.on('before-quit', async () => {
+  try {
+    await finderSession.closeSession();
+  } catch {}
 });
 
 app.on('window-all-closed', () => {

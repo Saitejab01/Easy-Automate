@@ -893,6 +893,71 @@ export const api = {
     }
   },
 
+  // ================= Web Element Finder API ================= //
+  finder: {
+    async startSession(url: string, browserType: 'chromium' | 'firefox' | 'webkit' = 'chromium', captureMode: 'normal' | 'reference' = 'normal') {
+      if (isElectron && (window as any).electronAPI?.finder?.startSession) {
+        return (window as any).electronAPI.finder.startSession(url, browserType, captureMode);
+      }
+      return { success: false, error: 'Live finder session requires Electron desktop app' };
+    },
+    async pauseCapture() {
+      if (isElectron && (window as any).electronAPI?.finder?.pauseCapture) {
+        return (window as any).electronAPI.finder.pauseCapture();
+      }
+      return { success: true };
+    },
+    async resumeCapture() {
+      if (isElectron && (window as any).electronAPI?.finder?.resumeCapture) {
+        return (window as any).electronAPI.finder.resumeCapture();
+      }
+      return { success: true };
+    },
+    async closeSession() {
+      if (isElectron && (window as any).electronAPI?.finder?.closeSession) {
+        return (window as any).electronAPI.finder.closeSession();
+      }
+      return { success: true };
+    },
+    async testLocator(type: string, value: string) {
+      if (isElectron && (window as any).electronAPI?.finder?.testLocator) {
+        return (window as any).electronAPI.finder.testLocator(type, value);
+      }
+      const stability = evaluateLocatorStability(type, value);
+      return { success: true, matchCount: -1, isVisible: true, isUnique: stability.isUnique, stability };
+    },
+    async highlightLocator(type: string, value: string) {
+      if (isElectron && (window as any).electronAPI?.finder?.highlightLocator) {
+        return (window as any).electronAPI.finder.highlightLocator(type, value);
+      }
+      return { success: true, matchCount: 1 };
+    },
+    async setCaptureMode(mode: 'normal' | 'reference') {
+      if (isElectron && (window as any).electronAPI?.finder?.setCaptureMode) {
+        return (window as any).electronAPI.finder.setCaptureMode(mode);
+      }
+      return { success: true };
+    },
+    async getStatus() {
+      if (isElectron && (window as any).electronAPI?.finder?.getStatus) {
+        return (window as any).electronAPI.finder.getStatus();
+      }
+      return { status: 'idle', isOpen: false, capturedCount: 0 };
+    },
+    onElementCaptured(callback: (elem: any) => void) {
+      if (isElectron && (window as any).electronAPI?.finder?.onElementCaptured) {
+        return (window as any).electronAPI.finder.onElementCaptured(callback);
+      }
+      return () => {};
+    },
+    onBrowserDisconnected(callback: () => void) {
+      if (isElectron && (window as any).electronAPI?.finder?.onBrowserDisconnected) {
+        return (window as any).electronAPI.finder.onBrowserDisconnected(callback);
+      }
+      return () => {};
+    }
+  },
+
   // ================= Stage 3: Test Data Management API ================= //
 
   testData: {

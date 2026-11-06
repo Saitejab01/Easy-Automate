@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   X,
   Crosshair,
   Sparkles,
   Play,
+  Pause,
   CheckCircle2,
   AlertCircle,
   ShieldCheck,
@@ -18,7 +19,17 @@ import {
   Tag,
   Code2,
   Copy,
-  Check
+  Check,
+  Trash2,
+  Star,
+  Eye,
+  Plus,
+  ChevronRight,
+  Search,
+  CheckSquare,
+  Square,
+  AlertTriangle,
+  Monitor
 } from 'lucide-react';
 import {
   Project,
@@ -26,7 +37,9 @@ import {
   RepositoryElement,
   Locator,
   ElementType,
-  LocatorType
+  LocatorType,
+  FinderCapturedElement,
+  FinderStrategy
 } from '../../api/types';
 import { api } from '../../api/client';
 import { evaluateLocatorStability } from '../../utils/locatorEvaluator';
@@ -48,76 +61,80 @@ interface LocatorFinderModalProps {
   }) => Promise<{ success: boolean; error?: string }>;
 }
 
-interface GeneratedStrategy {
-  id: string;
-  type: LocatorType;
-  value: string;
-  valueType: 'Static' | 'Dynamic';
-  isPrimary: boolean;
-  priority: number;
-  selected: boolean;
-  stabilityScore: number;
-  stability: 'High' | 'Moderate' | 'Low';
-  reasons: string[];
-  feedback: string;
-  matchCount: number;
-}
+const ELEMENT_TYPES: ElementType[] = [
+  'Button',
+  'Input Field',
+  'Link',
+  'Dropdown / Select',
+  'Checkbox',
+  'Radio Button',
+  'Text / Label',
+  'Image',
+  'Table',
+  'Modal',
+  'Card',
+  'Container',
+  'Custom'
+];
+
+const LOCATOR_TYPES: LocatorType[] = [
+  'ID',
+  'Test ID',
+  'Name',
+  'Label',
+  'Placeholder',
+  'CSS Selector',
+  'XPath',
+  'Text',
+  'Role',
+  'Class Name',
+  'Link Text',
+  'Partial Link Text'
+];
 
 const SAMPLE_ELEMENTS = [
   {
     name: 'Login Submit Button',
     type: 'Button' as ElementType,
     tag: 'button',
-    id: 'loginButton',
-    nameAttr: 'login',
-    testId: 'login-submit-btn',
-    classes: 'btn btn-primary w-full',
-    text: 'Log In to Account',
-    ariaLabel: 'Submit login credentials'
+    visibleText: 'Log In to Account',
+    accessibleName: 'Submit credentials',
+    description: 'Primary submission button for the login portal form',
+    locators: [
+      { type: 'Test ID' as LocatorType, value: 'login-submit-btn' },
+      { type: 'ID' as LocatorType, value: 'loginButton' },
+      { type: 'CSS Selector' as LocatorType, value: 'button.btn-primary.w-full' },
+      { type: 'XPath' as LocatorType, value: "//button[@id='loginButton' and contains(., 'Log In')]" },
+      { type: 'Label' as LocatorType, value: 'Submit credentials' }
+    ]
   },
   {
     name: 'Email Input Field',
     type: 'Input Field' as ElementType,
     tag: 'input',
-    id: 'user_email',
-    nameAttr: 'email',
-    testId: 'user-email-input',
-    classes: 'form-control input-lg',
-    text: '',
-    placeholder: 'name@company.com'
+    visibleText: '',
+    accessibleName: 'Email Address',
+    description: 'User email entry field on authentication screen',
+    locators: [
+      { type: 'Test ID' as LocatorType, value: 'user-email-input' },
+      { type: 'Name' as LocatorType, value: 'user_email' },
+      { type: 'Placeholder' as LocatorType, value: 'name@company.com' },
+      { type: 'CSS Selector' as LocatorType, value: 'input[name="user_email"]' },
+      { type: 'XPath' as LocatorType, value: "//input[@placeholder='name@company.com']" }
+    ]
   },
   {
-    name: 'Product Add To Cart',
+    name: 'Add to Cart Dynamic',
     type: 'Button' as ElementType,
     tag: 'button',
-    id: '',
-    nameAttr: '',
-    testId: 'add-cart-action',
-    classes: 'btn-add-cart cta-button',
-    text: 'Add to Cart',
-    customDynamic: "//button[@data-product-id='{dynamic product id}' and contains(., 'Add to Cart')]"
-  },
-  {
-    name: 'Global Search Bar',
-    type: 'Input Field' as ElementType,
-    tag: 'input',
-    id: 'store_search',
-    nameAttr: 'q',
-    testId: 'search-input',
-    classes: 'search-field header-search',
-    text: '',
-    placeholder: 'Search products, brands...'
-  },
-  {
-    name: 'Profile Dropdown Trigger',
-    type: 'Button' as ElementType,
-    tag: 'button',
-    id: 'profile_menu_trigger',
-    nameAttr: '',
-    testId: 'user-avatar-menu',
-    classes: 'avatar-btn rounded-full',
-    text: '',
-    ariaLabel: 'User Account Menu'
+    visibleText: 'Add to Cart',
+    accessibleName: 'Add item to shopping cart',
+    description: 'Dynamic button targeting variable product catalog item',
+    locators: [
+      { type: 'XPath' as LocatorType, value: "//button[@data-product-id='{dynamic product id}' and contains(., 'Add to Cart')]" },
+      { type: 'CSS Selector' as LocatorType, value: "button[data-product-id='{dynamic product id}']" },
+      { type: 'Test ID' as LocatorType, value: 'add-cart-action' }
+    ]
   }
 ];
 
@@ -130,674 +147,1436 @@ export const LocatorFinderModal: React.FC<LocatorFinderModalProps> = ({
   existingElements,
   onSaveElement
 }) => {
+  const defaultPageId = selectedPageId || ((pages && pages[0]?.id) || '');
+  const storageKey = `ea_finder_captured_${project?.id || 'default'}`;
+
+  // Browser configuration & session states
   const [inspectUrl, setInspectUrl] = useState(project?.baseUrl || 'https://demo.playwright.dev');
-  const [targetPageId, setTargetPageId] = useState(selectedPageId || ((pages && pages[0]?.id) || ''));
-  const [elementName, setElementName] = useState('Login Submit Button');
-  const [elementType, setElementType] = useState<ElementType>('Button');
-  const [elementDescription, setElementDescription] = useState('Primary action button captured with Locator Finder');
+  const [browserType, setBrowserType] = useState<'chromium' | 'firefox' | 'webkit'>('chromium');
+  const [captureMode, setCaptureMode] = useState<'normal' | 'reference'>('normal');
+  const [sessionStatus, setSessionStatus] = useState<'idle' | 'capturing' | 'paused' | 'closed'>('idle');
+  const [isStartingSession, setIsStartingSession] = useState(false);
 
-  // Interactive Inspector States
-  const [tag, setTag] = useState('button');
-  const [idAttr, setIdAttr] = useState('loginButton');
-  const [nameAttr, setNameAttr] = useState('login');
-  const [testIdAttr, setTestIdAttr] = useState('login-submit-btn');
-  const [classAttr, setClassAttr] = useState('btn btn-primary w-full');
-  const [textAttr, setTextAttr] = useState('Log In to Account');
-  const [placeholderAttr, setPlaceholderAttr] = useState('');
-  const [ariaLabelAttr, setAriaLabelAttr] = useState('Submit login credentials');
+  // Multi-element persistent capture collection
+  const [capturedElements, setCapturedElements] = useState<FinderCapturedElement[]>(() => {
+    try {
+      const stored = localStorage.getItem(storageKey);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return [];
+  });
 
-  const [generatedStrategies, setGeneratedStrategies] = useState<GeneratedStrategy[]>([]);
-  const [isInspectingBrowser, setIsInspectingBrowser] = useState(false);
-  const [inspectError, setInspectError] = useState<string | null>(null);
-  const [testingIdx, setTestingIdx] = useState<number | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
+  const [selectedElementId, setSelectedElementId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
-  const loadSample = (sample: typeof SAMPLE_ELEMENTS[0]) => {
-    setElementName(sample.name);
-    setElementType(sample.type);
-    setTag(sample.tag);
-    setIdAttr(sample.id);
-    setNameAttr(sample.nameAttr);
-    setTestIdAttr(sample.testId);
-    setClassAttr(sample.classes);
-    setTextAttr(sample.text);
-    setPlaceholderAttr(sample.placeholder || '');
-    setAriaLabelAttr(sample.ariaLabel || '');
-  };
+  // Per-locator interaction states
+  const [highlightingLocatorId, setHighlightingLocatorId] = useState<string | null>(null);
+  const [testingLocatorId, setTestingLocatorId] = useState<string | null>(null);
+  const [copiedLocatorId, setCopiedLocatorId] = useState<string | null>(null);
 
-  const generateAllStrategies = () => {
-    const list: Array<{ type: LocatorType; value: string; valueType?: 'Static' | 'Dynamic' }> = [];
+  // Global messages & dialogs
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [isSubmittingSingle, setIsSubmittingSingle] = useState(false);
 
-    // 1. Test ID (Highest standard)
-    if (testIdAttr.trim()) {
-      list.push({ type: 'Test ID', value: testIdAttr.trim() });
-    }
+  // Review & Batch Push Dialog states
+  const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
+  const [selectedForPush, setSelectedForPush] = useState<Record<string, boolean>>({});
+  const [targetPageOverrides, setTargetPageOverrides] = useState<Record<string, string>>({});
+  const [isPushingBatch, setIsPushingBatch] = useState(false);
 
-    // 2. Semantic ID
-    if (idAttr.trim()) {
-      list.push({ type: 'ID', value: idAttr.trim() });
-    }
+  // Persist captured elements whenever changed
+  useEffect(() => {
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(capturedElements));
+    } catch {}
+  }, [capturedElements, storageKey]);
 
-    // 3. Name Attribute
-    if (nameAttr.trim()) {
-      list.push({ type: 'Name', value: nameAttr.trim() });
-    }
-
-    // 4. Accessible Label / Role
-    if (ariaLabelAttr.trim()) {
-      list.push({ type: 'Label', value: ariaLabelAttr.trim() });
-    }
-
-    // 5. Placeholder
-    if (placeholderAttr.trim()) {
-      list.push({ type: 'Placeholder', value: placeholderAttr.trim() });
-    }
-
-    // 6. CSS Selector
-    if (classAttr.trim()) {
-      const cleanClasses = classAttr.trim().split(/\s+/).slice(0, 2).join('.');
-      list.push({ type: 'CSS Selector', value: `${tag}.${cleanClasses}` });
-    } else if (nameAttr.trim()) {
-      list.push({ type: 'CSS Selector', value: `${tag}[name='${nameAttr.trim()}']` });
-    }
-
-    // 7. Relative XPath (Stable relative path with text or attributes)
-    if (testIdAttr.trim()) {
-      list.push({ type: 'XPath', value: `//${tag}[@data-testid='${testIdAttr.trim()}']` });
-    } else if (nameAttr.trim()) {
-      list.push({ type: 'XPath', value: `//${tag}[@name='${nameAttr.trim()}']` });
-    } else if (textAttr.trim()) {
-      list.push({ type: 'XPath', value: `//${tag}[contains(., '${textAttr.trim()}')]` });
-    } else if (idAttr.trim()) {
-      list.push({ type: 'XPath', value: `//${tag}[@id='${idAttr.trim()}']` });
+  // Keep selectedElementId valid
+  useEffect(() => {
+    if (capturedElements.length > 0) {
+      if (!selectedElementId || !capturedElements.some(e => e.id === selectedElementId)) {
+        setSelectedElementId(capturedElements[0].id);
+      }
     } else {
-      list.push({ type: 'XPath', value: `//${tag}` });
+      setSelectedElementId(null);
     }
+  }, [capturedElements, selectedElementId]);
 
-    // 8. Dynamic Element Template (if applicable)
-    if (elementName.toLowerCase().includes('cart') || elementName.toLowerCase().includes('product')) {
-      list.push({
-        type: 'XPath',
-        value: `//${tag}[@data-product-id='{dynamic product id}' and contains(., 'Add to Cart')]`,
-        valueType: 'Dynamic'
-      });
-    }
-
-    // Evaluate stability for each candidate
-    const mapped: GeneratedStrategy[] = list.map((item, idx) => {
-      const evaluation = evaluateLocatorStability(item.type, item.value);
-      return {
-        id: 'strat_' + idx + '_' + Math.random().toString(36).substring(2, 6),
-        type: item.type,
-        value: item.value,
-        valueType: item.valueType || (/\{[^}]+\}/.test(item.value) ? 'Dynamic' : 'Static'),
-        isPrimary: idx === 0,
-        priority: idx + 1,
-        selected: true,
-        stabilityScore: evaluation.stabilityScore,
-        stability: evaluation.stability,
-        reasons: evaluation.reasons,
-        feedback: evaluation.feedback,
-        matchCount: 1
-      };
-    });
-
-    setGeneratedStrategies(mapped);
-  };
-
-  // Sync state when opening
+  // Query live status and attach capture stream listener
   useEffect(() => {
-    if (isOpen) {
-      setTargetPageId(selectedPageId || ((pages && pages[0]?.id) || ''));
-      setInspectUrl(project?.baseUrl || 'https://demo.playwright.dev');
-      loadSample(SAMPLE_ELEMENTS[0]);
-    }
-  }, [isOpen, selectedPageId, pages, project?.baseUrl]);
+    if (!isOpen) return;
 
-  // Regenerate strategies whenever inspection attributes change
-  useEffect(() => {
-    if (isOpen) {
-      generateAllStrategies();
-    }
-  }, [isOpen, tag, idAttr, nameAttr, testIdAttr, classAttr, textAttr, placeholderAttr, ariaLabelAttr]);
-
-  // Check if element with this name already exists in target page (Requirement 3: Synchronization)
-  const safeExisting = Array.isArray(existingElements) ? existingElements : [];
-  const existingDuplicate = safeExisting.find(
-    e => e && e.pageId === targetPageId && (e.name || '').trim().toLowerCase() === (elementName || '').trim().toLowerCase()
-  );
-
-  // Launch live Playwright browser inspector
-  const handleLaunchLiveInspector = async () => {
-    setIsInspectingBrowser(true);
-    setInspectError(null);
-    try {
-      const res = await api.repository.inspectElement(inspectUrl);
-      if (res && res.success && res.element) {
-        const el = res.element;
-        setTag(el.tagName || 'button');
-        setIdAttr(el.id || '');
-        setNameAttr(el.name || '');
-        setTestIdAttr(el.testId || '');
-        setClassAttr(el.className || '');
-        setTextAttr(el.textContent || '');
-        setPlaceholderAttr(el.placeholder || '');
-        setAriaLabelAttr(el.ariaLabel || '');
-        if (el.textContent) {
-          setElementName(el.textContent.slice(0, 30));
-        } else if (el.id) {
-          setElementName(el.id);
-        } else if (el.name) {
-          setElementName(el.name);
-        }
-      } else if (res && res.error) {
-        setInspectError(res.error);
+    api.finder.getStatus().then((status: any) => {
+      if (status && status.isOpen) {
+        setSessionStatus(status.status || 'capturing');
       }
-    } catch (err: any) {
-      setInspectError(err.message || 'Live inspector failed to connect');
-    } finally {
-      setIsInspectingBrowser(false);
-    }
-  };
+    }).catch(() => {});
 
-  // Move priority up / down
-  const movePriorityUp = (index: number) => {
-    if (index === 0) return;
-    const next = [...generatedStrategies];
-    const temp = next[index - 1];
-    next[index - 1] = next[index];
-    next[index] = temp;
-    next.forEach((s, i) => {
-      s.priority = i + 1;
-      s.isPrimary = i === 0;
-    });
-    setGeneratedStrategies(next);
-  };
-
-  const movePriorityDown = (index: number) => {
-    if (index === generatedStrategies.length - 1) return;
-    const next = [...generatedStrategies];
-    const temp = next[index + 1];
-    next[index + 1] = next[index];
-    next[index] = temp;
-    next.forEach((s, i) => {
-      s.priority = i + 1;
-      s.isPrimary = i === 0;
-    });
-    setGeneratedStrategies(next);
-  };
-
-  const toggleSelectStrategy = (index: number) => {
-    const next = [...generatedStrategies];
-    next[index].selected = !next[index].selected;
-    setGeneratedStrategies(next);
-  };
-
-  // Live test locator button
-  const handleTestLocator = async (index: number) => {
-    const strat = generatedStrategies[index];
-    setTestingIdx(index);
-    try {
-      const res = await api.repository.testLocator(strat.type, strat.value);
-      if (res && res.stability) {
-        const next = [...generatedStrategies];
-        next[index] = {
-          ...next[index],
-          stabilityScore: res.stability.stabilityScore,
-          stability: res.stability.stability,
-          reasons: res.stability.reasons,
-          feedback: res.stability.feedback,
-          matchCount: res.matchCount >= 0 ? res.matchCount : 1
-        };
-        setGeneratedStrategies(next);
-      }
-    } catch (err) {
-      console.error('Test locator failed:', err);
-    } finally {
-      setTestingIdx(null);
-    }
-  };
-
-  // Push to Repository or Synchronize / Overwrite Existing
-  const handlePushToRepository = async (forceOverwrite: boolean = false) => {
-    if (!elementName.trim()) {
-      setInspectError('Element Name is required.');
-      return;
-    }
-    if (!targetPageId) {
-      setInspectError('Please select a target repository page.');
-      return;
-    }
-
-    const selectedLocators = generatedStrategies
-      .filter(s => s.selected)
-      .map((s, idx) => ({
-        id: 'loc_' + Date.now() + '_' + idx,
-        type: s.type,
-        value: s.value,
-        valueType: s.valueType,
-        isPrimary: idx === 0,
-        priority: idx + 1
-      }));
-
-    if (selectedLocators.length === 0) {
-      setInspectError('Please select at least one locator strategy to push.');
-      return;
-    }
-
-    setIsSubmitting(true);
-    setInspectError(null);
-
-    try {
-      const overwriteId = forceOverwrite && existingDuplicate ? existingDuplicate.id : undefined;
-      const res = await onSaveElement({
-        name: elementName.trim(),
-        type: elementType,
-        description: elementDescription.trim(),
-        pageId: targetPageId,
-        locators: selectedLocators,
-        overwriteElementId: overwriteId
+    const unsubCapture = api.finder.onElementCaptured((capturedRecord: FinderCapturedElement) => {
+      setCapturedElements(prev => {
+        const next = [...prev, {
+          ...capturedRecord,
+          targetPageId: capturedRecord.targetPageId || defaultPageId
+        }];
+        return next;
       });
+      setSelectedElementId(capturedRecord.id);
+      setSuccessMsg(`Captured "${capturedRecord.name}" successfully! Live browser remains open for continuous capture.`);
+      setErrorMsg(null);
+    });
 
+    const unsubDisconnect = api.finder.onBrowserDisconnected(() => {
+      setSessionStatus('closed');
+    });
+
+    return () => {
+      unsubCapture();
+      unsubDisconnect();
+    };
+  }, [isOpen, defaultPageId]);
+
+  // Auto-dismiss transient messages
+  useEffect(() => {
+    if (successMsg) {
+      const timer = setTimeout(() => setSuccessMsg(null), 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [successMsg]);
+
+  // Currently selected element object
+  const selectedElement = useMemo(() => {
+    return capturedElements.find(e => e.id === selectedElementId) || capturedElements[0] || null;
+  }, [capturedElements, selectedElementId]);
+
+  // Update a field on the currently selected element
+  const updateSelectedElement = (partial: Partial<FinderCapturedElement>) => {
+    if (!selectedElement) return;
+    setCapturedElements(prev =>
+      prev.map(el => (el.id === selectedElement.id ? { ...el, ...partial } : el))
+    );
+  };
+
+  // Helper to construct a FinderStrategy
+  const createFinderStrategy = (type: LocatorType, value: string, isPrimary: boolean, priority: number): FinderStrategy => {
+    const evaluation = evaluateLocatorStability(type, value);
+    return {
+      id: 'strat_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+      type,
+      value,
+      valueType: /\{[^}]+\}/.test(value) ? 'Dynamic' : 'Static',
+      isPrimary,
+      priority,
+      selected: true,
+      stabilityScore: evaluation.stabilityScore,
+      stability: evaluation.stability,
+      reasons: evaluation.reasons,
+      feedback: evaluation.feedback,
+      matchCount: 1
+    };
+  };
+
+  // Load a built-in sample element
+  const handleLoadSample = (sample: typeof SAMPLE_ELEMENTS[0]) => {
+    const seq = capturedElements.length + 1;
+    const strategies: FinderStrategy[] = sample.locators.map((loc, idx) =>
+      createFinderStrategy(loc.type, loc.value, idx === 0, idx + 1)
+    );
+
+    const newElement: FinderCapturedElement = {
+      id: 'sample_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+      sequence: seq,
+      name: `${sample.name} #${seq}`,
+      type: sample.type,
+      tag: sample.tag,
+      visibleText: sample.visibleText,
+      accessibleName: sample.accessibleName,
+      description: sample.description,
+      locators: strategies,
+      primaryLocatorId: strategies[0]?.id || '',
+      targetPageId: defaultPageId,
+      pushed: false,
+      capturedAt: new Date().toISOString()
+    };
+
+    setCapturedElements(prev => [...prev, newElement]);
+    setSelectedElementId(newElement.id);
+    setSuccessMsg(`Added sample element: "${newElement.name}"`);
+  };
+
+  // Browser Session Controls
+  const handleStartSession = async () => {
+    setIsStartingSession(true);
+    setErrorMsg(null);
+    try {
+      const res = await api.finder.startSession(inspectUrl, browserType, captureMode);
       if (res.success) {
-        setSaveSuccessMsg(
-          overwriteId
-            ? `Repository synchronized! Element "${elementName}" updated with ${selectedLocators.length} locators.`
-            : `Element "${elementName}" successfully pushed to repository.`
-        );
-        setTimeout(() => {
-          onClose();
-        }, 1200);
+        setSessionStatus('capturing');
+        setSuccessMsg('Live browser session active. Hover and click elements on the page to capture locators continuously.');
       } else {
-        setInspectError(res.error || 'Failed to save element to repository.');
+        setErrorMsg(res.error || 'Failed to start browser session');
       }
     } catch (err: any) {
-      setInspectError(err.message || 'Error occurred while saving to repository.');
+      setErrorMsg(err.message || 'Error launching browser');
     } finally {
-      setIsSubmitting(false);
+      setIsStartingSession(false);
     }
   };
+
+  const handlePauseSession = async () => {
+    try {
+      await api.finder.pauseCapture();
+      setSessionStatus('paused');
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to pause capture');
+    }
+  };
+
+  const handleResumeSession = async () => {
+    try {
+      await api.finder.resumeCapture();
+      setSessionStatus('capturing');
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to resume capture');
+    }
+  };
+
+  const handleCloseBrowser = async () => {
+    try {
+      await api.finder.closeSession();
+      setSessionStatus('closed');
+      setSuccessMsg('Browser session ended.');
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to close browser');
+    }
+  };
+
+  const handleModeChange = async (mode: 'normal' | 'reference') => {
+    setCaptureMode(mode);
+    try {
+      await api.finder.setCaptureMode(mode);
+      if (mode === 'reference') {
+        setSuccessMsg('Reference Mode active: First click the Reference element, then click the Target element.');
+      }
+    } catch (err: any) {
+      console.warn('Could not update capture mode in browser:', err);
+    }
+  };
+
+  // Locator Management Actions
+  const handleSetPrimary = (locatorId: string) => {
+    if (!selectedElement) return;
+    const targetLoc = selectedElement.locators.find(l => l.id === locatorId);
+    if (!targetLoc) return;
+
+    const remaining = selectedElement.locators.filter(l => l.id !== locatorId);
+    const reordered = [targetLoc, ...remaining].map((l, idx) => ({
+      ...l,
+      isPrimary: idx === 0,
+      priority: idx + 1
+    }));
+
+    updateSelectedElement({
+      locators: reordered,
+      primaryLocatorId: targetLoc.id
+    });
+  };
+
+  const handleMovePriority = (index: number, direction: 'up' | 'down') => {
+    if (!selectedElement) return;
+    const locators = [...selectedElement.locators];
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= locators.length) return;
+
+    const temp = locators[index];
+    locators[index] = locators[targetIndex];
+    locators[targetIndex] = temp;
+
+    const updated = locators.map((l, i) => ({
+      ...l,
+      priority: i + 1,
+      isPrimary: i === 0
+    }));
+
+    updateSelectedElement({
+      locators: updated,
+      primaryLocatorId: updated[0]?.id || ''
+    });
+  };
+
+  const handleUpdateLocator = (locatorId: string, updates: Partial<FinderStrategy>) => {
+    if (!selectedElement) return;
+    const updatedLocators = selectedElement.locators.map(loc => {
+      if (loc.id !== locatorId) return loc;
+      const merged = { ...loc, ...updates };
+
+      if (updates.value !== undefined || updates.type !== undefined) {
+        const evalResult = evaluateLocatorStability(merged.type, merged.value);
+        merged.stabilityScore = evalResult.stabilityScore;
+        merged.stability = evalResult.stability;
+        merged.reasons = evalResult.reasons;
+        merged.feedback = evalResult.feedback;
+        merged.valueType = /\{[^}]+\}/.test(merged.value) ? 'Dynamic' : 'Static';
+      }
+      return merged;
+    });
+
+    updateSelectedElement({ locators: updatedLocators });
+  };
+
+  const handleDeleteLocator = (locatorId: string) => {
+    if (!selectedElement) return;
+    if (selectedElement.locators.length <= 1) {
+      setErrorMsg('Cannot delete the only remaining locator strategy. Each element requires at least one locator.');
+      return;
+    }
+
+    const nextLocators = selectedElement.locators.filter(l => l.id !== locatorId);
+    const hasPrimary = nextLocators.some(l => l.isPrimary);
+    if (!hasPrimary && nextLocators.length > 0) {
+      nextLocators[0].isPrimary = true;
+    }
+
+    nextLocators.forEach((l, i) => {
+      l.priority = i + 1;
+    });
+
+    updateSelectedElement({
+      locators: nextLocators,
+      primaryLocatorId: nextLocators.find(l => l.isPrimary)?.id || nextLocators[0]?.id || ''
+    });
+    setSuccessMsg('Locator strategy removed.');
+  };
+
+  const handleAddCustomLocator = () => {
+    if (!selectedElement) return;
+    const newStrategy = createFinderStrategy(
+      'XPath',
+      `//${selectedElement.tag || 'div'}`,
+      false,
+      selectedElement.locators.length + 1
+    );
+    updateSelectedElement({
+      locators: [...selectedElement.locators, newStrategy]
+    });
+  };
+
+  const handleHighlightLocator = async (locator: FinderStrategy) => {
+    setHighlightingLocatorId(locator.id);
+    setErrorMsg(null);
+    try {
+      const res = await api.finder.highlightLocator(locator.type, locator.value);
+      if (!res.success && res.error) {
+        setErrorMsg(res.error);
+      } else {
+        setSuccessMsg(`Highlighted ${res.matchCount} matching element(s) in browser`);
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Highlight failed');
+    } finally {
+      setTimeout(() => setHighlightingLocatorId(null), 1200);
+    }
+  };
+
+  const handleTestLocator = async (locator: FinderStrategy) => {
+    setTestingLocatorId(locator.id);
+    setErrorMsg(null);
+    try {
+      const res = await api.finder.testLocator(locator.type, locator.value);
+      if (res) {
+        handleUpdateLocator(locator.id, {
+          matchCount: res.matchCount,
+          stabilityScore: res.stability?.stabilityScore ?? locator.stabilityScore,
+          stability: res.stability?.stability ?? locator.stability,
+          reasons: res.stability?.reasons ?? locator.reasons,
+          feedback: res.stability?.feedback ?? locator.feedback
+        });
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Locator testing failed');
+    } finally {
+      setTestingLocatorId(null);
+    }
+  };
+
+  const handleCopyLocator = (locator: FinderStrategy) => {
+    try {
+      navigator.clipboard.writeText(locator.value);
+      setCopiedLocatorId(locator.id);
+      setTimeout(() => setCopiedLocatorId(null), 1500);
+    } catch {
+      setErrorMsg('Could not access clipboard');
+    }
+  };
+
+  const handleDeleteElement = (elementId: string) => {
+    const next = capturedElements.filter(e => e.id !== elementId);
+    setCapturedElements(next);
+    if (selectedElementId === elementId) {
+      setSelectedElementId(next[0]?.id || null);
+    }
+    setSuccessMsg('Element removed from capture session.');
+  };
+
+  const handleClearAll = () => {
+    if (window.confirm('Clear all captured elements from this session?')) {
+      setCapturedElements([]);
+      setSelectedElementId(null);
+      localStorage.removeItem(storageKey);
+      setSuccessMsg('Captured elements cleared.');
+    }
+  };
+
+  // Push Selected Elements to Repository
+  const handlePushSingle = async () => {
+    if (!selectedElement) return;
+    const targetPage = selectedElement.targetPageId || defaultPageId;
+
+    if (!selectedElement.name.trim()) {
+      setErrorMsg('Element Name is required.');
+      return;
+    }
+    if (!targetPage) {
+      setErrorMsg('Please select a target repository page.');
+      return;
+    }
+
+    const locatorsPayload: Locator[] = selectedElement.locators.map((s, idx) => ({
+      id: s.id,
+      type: s.type,
+      value: s.value,
+      valueType: s.valueType,
+      isPrimary: s.isPrimary,
+      priority: idx + 1
+    }));
+
+    if (locatorsPayload.length === 0) {
+      setErrorMsg('Please provide at least one locator strategy.');
+      return;
+    }
+
+    // Check duplicate
+    const safeExisting = Array.isArray(existingElements) ? existingElements : [];
+    const duplicate = safeExisting.find(
+      e => e && e.pageId === targetPage && (e.name || '').trim().toLowerCase() === selectedElement.name.trim().toLowerCase()
+    );
+
+    setIsSubmittingSingle(true);
+    setErrorMsg(null);
+    try {
+      const res = await onSaveElement({
+        name: selectedElement.name.trim(),
+        type: selectedElement.type,
+        description: selectedElement.description?.trim(),
+        pageId: targetPage,
+        locators: locatorsPayload,
+        overwriteElementId: duplicate?.id
+      });
+
+      if (res && res.success) {
+        updateSelectedElement({ pushed: true });
+        setSuccessMsg(`Pushed "${selectedElement.name}" to Repository successfully!`);
+      } else {
+        setErrorMsg(res?.error || 'Failed to save element to repository');
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Error pushing element');
+    } finally {
+      setIsSubmittingSingle(false);
+    }
+  };
+
+  // Batch Push Review Dialog handlers
+  const openReviewModal = () => {
+    const initialSelection: Record<string, boolean> = {};
+    const initialPages: Record<string, string> = {};
+    capturedElements.forEach(el => {
+      initialSelection[el.id] = true;
+      initialPages[el.id] = el.targetPageId || defaultPageId;
+    });
+    setSelectedForPush(initialSelection);
+    setTargetPageOverrides(initialPages);
+    setIsReviewModalOpen(true);
+  };
+
+  const handleToggleSelectAll = () => {
+    const allSelected = capturedElements.every(e => selectedForPush[e.id]);
+    const next: Record<string, boolean> = {};
+    capturedElements.forEach(e => {
+      next[e.id] = !allSelected;
+    });
+    setSelectedForPush(next);
+  };
+
+  const handlePushBatch = async () => {
+    const toPush = capturedElements.filter(e => selectedForPush[e.id]);
+    if (toPush.length === 0) {
+      setErrorMsg('Please select at least one element to push.');
+      return;
+    }
+
+    setIsPushingBatch(true);
+    setErrorMsg(null);
+    let successCount = 0;
+    const safeExisting = Array.isArray(existingElements) ? existingElements : [];
+
+    try {
+      for (const item of toPush) {
+        const targetPage = targetPageOverrides[item.id] || item.targetPageId || defaultPageId;
+        const duplicate = safeExisting.find(
+          e => e && e.pageId === targetPage && (e.name || '').trim().toLowerCase() === item.name.trim().toLowerCase()
+        );
+
+        const locatorsPayload: Locator[] = item.locators.map((s, idx) => ({
+          id: s.id,
+          type: s.type,
+          value: s.value,
+          valueType: s.valueType,
+          isPrimary: s.isPrimary,
+          priority: idx + 1
+        }));
+
+        const res = await onSaveElement({
+          name: item.name.trim(),
+          type: item.type,
+          description: item.description?.trim(),
+          pageId: targetPage,
+          locators: locatorsPayload,
+          overwriteElementId: duplicate?.id
+        });
+
+        if (res && res.success) {
+          successCount++;
+        }
+      }
+
+      setCapturedElements(prev =>
+        prev.map(el => (selectedForPush[el.id] ? { ...el, pushed: true } : el))
+      );
+      setSuccessMsg(`Pushed ${successCount} element(s) to Repository successfully!`);
+      setIsReviewModalOpen(false);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Error occurred during batch push');
+    } finally {
+      setIsPushingBatch(false);
+    }
+  };
+
+  const filteredCapturedElements = useMemo(() => {
+    if (!searchQuery.trim()) return capturedElements;
+    const q = searchQuery.toLowerCase();
+    return capturedElements.filter(
+      e => e.name.toLowerCase().includes(q) || e.tag.toLowerCase().includes(q)
+    );
+  }, [capturedElements, searchQuery]);
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 overflow-hidden bg-black/75 backdrop-blur-md flex items-center justify-center p-4 animate-fadeIn">
-      <div className="w-full max-w-5xl bg-slate-900 border border-slate-800 rounded-2xl flex flex-col max-h-[92vh] shadow-2xl overflow-hidden animate-scaleUp">
-        {/* Header */}
-        <div className="px-6 py-4 border-b border-slate-800 bg-slate-950 flex items-center justify-between">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/85 backdrop-blur-md animate-fadeIn">
+      <div className="bg-slate-950 border border-slate-800 rounded-2xl w-full max-w-[1440px] h-[92vh] flex flex-col shadow-2xl overflow-hidden">
+        {/* Top Header Bar */}
+        <div className="flex items-center justify-between px-6 py-3.5 border-b border-slate-800/80 bg-slate-900/90 shrink-0">
           <div className="flex items-center space-x-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-brand-600 to-cyan-500 flex items-center justify-center text-white shadow-lg shadow-brand-500/20">
-              <Crosshair className="w-5 h-5" />
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-brand-500/20 to-cyan-500/20 border border-brand-500/30 flex items-center justify-center text-brand-400 shadow-inner">
+              <Crosshair className="w-5 h-5 animate-pulse" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-base font-bold text-white">Interactive Locator Finder</h3>
-                <span className="text-[10px] bg-brand-500/10 text-brand-400 border border-brand-500/20 px-2 py-0.5 rounded-full font-semibold">
-                  Multi-Strategy Generator & Evaluator
+              <div className="flex items-center space-x-2.5">
+                <h2 className="text-base font-bold text-white tracking-wide">
+                  Web Element Finder & Locator Studio
+                </h2>
+                <span className={`px-2 py-0.5 rounded-full text-[11px] font-semibold border ${
+                  captureMode === 'reference'
+                    ? 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+                    : 'bg-brand-500/10 border-brand-500/30 text-brand-400'
+                }`}>
+                  {captureMode === 'reference' ? 'Relative Reference Mode' : 'Continuous Capture Mode'}
                 </span>
+                {sessionStatus === 'capturing' && (
+                  <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-500/10 border border-emerald-500/30 text-emerald-400">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                    Browser Active
+                  </span>
+                )}
+                {sessionStatus === 'paused' && (
+                  <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-500/10 border border-amber-500/30 text-amber-400">
+                    Capture Paused
+                  </span>
+                )}
               </div>
-              <p className="text-xs text-slate-400">
-                Inspect UI elements, test stability scores, reorder fallback priority, and push directly to Repository
+              <p className="text-xs text-slate-400 mt-0.5">
+                Click elements in the live browser to capture and manage locators continuously without losing session context.
               </p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
 
-        {/* Top URL & Live Browser Bar */}
-        <div className="px-6 py-3 bg-slate-950/60 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
-          <div className="flex items-center gap-2 flex-1 min-w-[280px]">
-            <Globe className="w-4 h-4 text-brand-400 shrink-0" />
-            <input
-              type="text"
-              value={inspectUrl}
-              onChange={(e) => setInspectUrl(e.target.value)}
-              placeholder="https://your-app.com or project URL"
-              className="flex-1 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-200 text-xs font-mono focus:border-brand-500 focus:outline-none"
-            />
-          </div>
-
-          <div className="flex items-center gap-2">
+          <div className="flex items-center space-x-2">
             <button
-              type="button"
-              onClick={handleLaunchLiveInspector}
-              disabled={isInspectingBrowser}
-              className="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-cyan-600/20 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-600/30 flex items-center gap-1.5 transition-colors"
+              onClick={onClose}
+              className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800/70 transition-colors"
+              title="Close Locator Finder"
             >
-              {isInspectingBrowser ? (
-                <>
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  <span>Inspecting Browser...</span>
-                </>
-              ) : (
-                <>
-                  <ExternalLink className="w-3.5 h-3.5" />
-                  <span>Launch Live Inspector</span>
-                </>
-              )}
+              <X className="w-5 h-5" />
             </button>
           </div>
         </div>
 
-        {/* Modal Body */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
-          {inspectError && (
-            <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
-              <span>{inspectError}</span>
-            </div>
-          )}
-
-          {saveSuccessMsg && (
-            <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-              <span>{saveSuccessMsg}</span>
-            </div>
-          )}
-
-          {/* Quick Element Presets Selector */}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
-                Quick Element Presets / Sample Inspector
-              </span>
-              <span className="text-[10px] text-slate-500">Click any preset to simulate inspection</span>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {SAMPLE_ELEMENTS.map((sample, sIdx) => (
-                <button
-                  key={sIdx}
-                  type="button"
-                  onClick={() => loadSample(sample)}
-                  className={`px-3 py-1 rounded-lg text-xs font-medium border transition-colors ${
-                    elementName === sample.name
-                      ? 'bg-brand-600/20 text-brand-300 border-brand-500/40 shadow-sm'
-                      : 'bg-slate-950/60 text-slate-400 border-slate-800 hover:text-slate-200 hover:bg-slate-800/60'
-                  }`}
-                >
-                  {sample.name}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Target Element Attributes & Target Repository Section */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 rounded-xl bg-slate-950 border border-slate-800">
-            <div>
-              <label className="block text-[11px] font-semibold text-slate-300 mb-1">
-                Element Name in Repository <span className="text-rose-400">*</span>
-              </label>
+        {/* Browser Session Control Toolbar */}
+        <div className="px-6 py-2.5 bg-slate-900/60 border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-3 shrink-0">
+          <div className="flex items-center flex-1 min-w-[320px] max-w-2xl space-x-2">
+            <div className="relative flex-1">
+              <Globe className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
-                value={elementName}
-                onChange={(e) => setElementName(e.target.value)}
-                className="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-100 text-xs font-medium focus:border-brand-500"
+                value={inspectUrl}
+                onChange={e => setInspectUrl(e.target.value)}
+                placeholder="https://example.com"
+                className="w-full pl-9 pr-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 focus:border-brand-500 text-slate-200 text-xs transition-colors"
               />
             </div>
 
-            <div>
-              <label className="block text-[11px] font-semibold text-slate-300 mb-1">
-                Element Type <span className="text-rose-400">*</span>
-              </label>
-              <select
-                value={elementType}
-                onChange={(e) => setElementType(e.target.value as ElementType)}
-                className="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-200 text-xs font-medium focus:border-brand-500"
-              >
-                <option value="Button">Button</option>
-                <option value="Input Field">Input Field</option>
-                <option value="Link">Link</option>
-                <option value="Dropdown / Select">Dropdown / Select</option>
-                <option value="Checkbox">Checkbox</option>
-                <option value="Text / Label">Text / Label</option>
-                <option value="Table">Table</option>
-                <option value="Custom">Custom</option>
-              </select>
-            </div>
+            <select
+              value={browserType}
+              onChange={e => setBrowserType(e.target.value as any)}
+              className="px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-300 text-xs focus:border-brand-500"
+            >
+              <option value="chromium">Chromium</option>
+              <option value="firefox">Firefox</option>
+              <option value="webkit">WebKit (Safari)</option>
+            </select>
 
-            <div>
-              <label className="block text-[11px] font-semibold text-slate-300 mb-1 flex items-center gap-1">
-                <FolderTree className="w-3 h-3 text-brand-400" />
-                <span>Target Repository Page <span className="text-rose-400">*</span></span>
-              </label>
-              <select
-                value={targetPageId}
-                onChange={(e) => setTargetPageId(e.target.value)}
-                className="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-200 text-xs font-medium focus:border-brand-500"
+            <div className="flex items-center p-0.5 rounded-xl bg-slate-950 border border-slate-800">
+              <button
+                type="button"
+                onClick={() => handleModeChange('normal')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+                  captureMode === 'normal'
+                    ? 'bg-brand-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
               >
-                {(pages || []).map(p => (
-                  <option key={p.id} value={p.id}>
-                    {p.parentId ? `↳ ${p.name} (Subpage)` : `📄 ${p.name}`}
-                  </option>
-                ))}
-              </select>
+                Normal
+              </button>
+              <button
+                type="button"
+                onClick={() => handleModeChange('reference')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+                  captureMode === 'reference'
+                    ? 'bg-amber-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+                title="Capture relative locators between reference and target elements"
+              >
+                Reference
+              </button>
             </div>
           </div>
 
-          {/* Generated Locator Strategies & Fallback Priority (Requirements 1 & 2) */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-200 flex items-center gap-1.5">
-                  <Tag className="w-3.5 h-3.5 text-brand-400" />
-                  Generated Locator Strategies & Fallback Order ({generatedStrategies.length})
-                </h4>
-                <p className="text-[11px] text-slate-400">
-                  Assess attribute stability, test matching elements in live browser, and configure priority fallback sequence.
-                </p>
-              </div>
-
-              <span className="text-[10px] text-slate-500 font-mono">
-                {generatedStrategies.filter(s => s.selected).length} strategies selected
-              </span>
-            </div>
-
-            {/* List of Generated Strategies */}
-            <div className="space-y-3">
-              {generatedStrategies.map((strat, idx) => {
-                const isTesting = testingIdx === idx;
-                return (
-                  <div
-                    key={strat.id}
-                    className={`p-3.5 rounded-xl border transition-all ${
-                      strat.selected
-                        ? 'bg-slate-950 border-slate-800 hover:border-slate-700'
-                        : 'bg-slate-950/40 border-slate-900 opacity-60'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-3 text-xs mb-2">
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={strat.selected}
-                          onChange={() => toggleSelectStrategy(idx)}
-                          className="w-4 h-4 rounded border-slate-700 text-brand-600 focus:ring-brand-500 bg-slate-900"
-                        />
-
-                        {idx === 0 ? (
-                          <span className="text-[10px] bg-brand-500/20 text-brand-300 border border-brand-500/40 px-2 py-0.5 rounded-full font-bold flex items-center gap-1">
-                            <span className="w-1.5 h-1.5 rounded-full bg-brand-400 animate-pulse" />
-                            #1 Primary Strategy
-                          </span>
-                        ) : (
-                          <span className="text-[10px] bg-slate-800 text-slate-300 border border-slate-700 px-2 py-0.5 rounded-full font-semibold">
-                            #{idx + 1} Fallback Strategy #{idx}
-                          </span>
-                        )}
-
-                        <span className="font-mono text-[11px] text-slate-300 font-semibold bg-slate-900 px-2 py-0.5 rounded border border-slate-800">
-                          {strat.type}
-                        </span>
-
-                        {strat.valueType === 'Dynamic' && (
-                          <span className="text-[10px] bg-purple-500/10 text-purple-400 border border-purple-500/30 px-2 py-0.5 rounded-full font-semibold flex items-center gap-1">
-                            <Sparkles className="w-2.5 h-2.5" />
-                            Dynamic
-                          </span>
-                        )}
-                      </div>
-
-                      {/* Stability Badge & Score */}
-                      <div className="flex items-center gap-2">
-                        {strat.stability === 'High' ? (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
-                            <ShieldCheck className="w-3 h-3" />
-                            High Stability ({strat.stabilityScore}/100)
-                          </span>
-                        ) : strat.stability === 'Moderate' ? (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30">
-                            <ShieldAlert className="w-3 h-3" />
-                            Moderate Stability ({strat.stabilityScore}/100)
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[10px] font-bold bg-rose-500/10 text-rose-400 border border-rose-500/30">
-                            <ShieldAlert className="w-3 h-3" />
-                            Fragile Locator ({strat.stabilityScore}/100)
-                          </span>
-                        )}
-
-                        <span className="text-[10px] bg-slate-900 border border-slate-800 text-slate-300 px-2 py-0.5 rounded font-mono">
-                          {strat.matchCount === 1 ? '1 Match' : `${strat.matchCount} Matches`}
-                        </span>
-
-                        {/* Priority Reordering Buttons */}
-                        <button
-                          type="button"
-                          disabled={idx === 0}
-                          onClick={() => movePriorityUp(idx)}
-                          className="p-1 rounded text-slate-400 hover:text-white disabled:opacity-30 hover:bg-slate-800 transition-colors"
-                          title="Move Up in Priority"
-                        >
-                          <ArrowUp className="w-3.5 h-3.5" />
-                        </button>
-
-                        <button
-                          type="button"
-                          disabled={idx === generatedStrategies.length - 1}
-                          onClick={() => movePriorityDown(idx)}
-                          className="p-1 rounded text-slate-400 hover:text-white disabled:opacity-30 hover:bg-slate-800 transition-colors"
-                          title="Move Down in Priority"
-                        >
-                          <ArrowDown className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Locator Expression Input & Live Test Button */}
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="text"
-                        value={strat.value}
-                        readOnly
-                        className="flex-1 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-200 text-xs font-mono select-all"
-                      />
-
-                      <button
-                        type="button"
-                        onClick={() => handleTestLocator(idx)}
-                        disabled={isTesting}
-                        className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-600/30 flex items-center gap-1.5 transition-colors shrink-0"
-                        title="Test locator against DOM and evaluate match uniqueness"
-                      >
-                        {isTesting ? (
-                          <>
-                            <RefreshCw className="w-3 h-3 animate-spin" />
-                            <span>Testing...</span>
-                          </>
-                        ) : (
-                          <>
-                            <Play className="w-3 h-3" />
-                            <span>Test Locator</span>
-                          </>
-                        )}
-                      </button>
-                    </div>
-
-                    {/* Stability breakdown & feedback */}
-                    <div className="mt-2 pt-2 border-t border-slate-900 flex items-start justify-between text-[11px] text-slate-400">
-                      <p className="font-medium text-slate-300">
-                        {strat.feedback}
-                      </p>
-                      {strat.reasons.length > 0 && (
-                        <span className="text-[10px] text-slate-500 italic shrink-0 ml-3">
-                          {strat.reasons[0]}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Requirement 3: Repository Synchronization Alert Banner */}
-          {existingDuplicate && (
-            <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 space-y-2 text-xs animate-fadeIn">
-              <div className="flex items-center gap-2 text-amber-300 font-bold">
-                <Layers className="w-4 h-4 text-amber-400" />
-                <span>Element Already Exists in Selected Repository Page</span>
-              </div>
-              <p className="text-slate-300 leading-relaxed">
-                An element named <strong className="text-white">"{elementName}"</strong> is already registered under this page.
-                Choose <strong className="text-emerald-400">Update Repository</strong> to update and synchronize its locators with this new fallback strategy, or click <strong className="text-slate-200">Push as New</strong> to create a separate copy.
-              </p>
-            </div>
-          )}
-        </div>
-
-        {/* Footer Actions */}
-        <div className="px-6 py-4 border-t border-slate-800 bg-slate-950 flex items-center justify-between">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-          >
-            Cancel
-          </button>
-
-          <div className="flex items-center gap-3">
-            {existingDuplicate ? (
+          <div className="flex items-center space-x-2.5">
+            {sessionStatus === 'capturing' ? (
               <>
                 <button
                   type="button"
-                  onClick={() => handlePushToRepository(false)}
-                  disabled={isSubmitting}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 transition-colors"
+                  onClick={handlePauseSession}
+                  className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-amber-500/10 border border-amber-500/30 text-amber-300 hover:bg-amber-500/20 flex items-center space-x-1.5 transition-all"
                 >
-                  Push as New (Duplicate)
+                  <Pause className="w-3.5 h-3.5" />
+                  <span>Pause Capture</span>
                 </button>
-
                 <button
                   type="button"
-                  onClick={() => handlePushToRepository(true)}
-                  disabled={isSubmitting}
-                  className="px-6 py-2.5 rounded-xl text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-600/30 transition-all hover:scale-[1.02] flex items-center gap-2"
+                  onClick={handleCloseBrowser}
+                  className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 border border-slate-700 text-slate-300 hover:bg-rose-500/20 hover:text-rose-300 hover:border-rose-500/30 flex items-center space-x-1.5 transition-all"
                 >
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>Update Repository (Synchronize Existing)</span>
+                  <X className="w-3.5 h-3.5" />
+                  <span>Close Browser</span>
+                </button>
+              </>
+            ) : sessionStatus === 'paused' ? (
+              <>
+                <button
+                  type="button"
+                  onClick={handleResumeSession}
+                  className="px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white flex items-center space-x-1.5 transition-all shadow-md shadow-emerald-900/30"
+                >
+                  <Play className="w-3.5 h-3.5" />
+                  <span>Resume Capture</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCloseBrowser}
+                  className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 border border-slate-700 text-slate-300 hover:bg-rose-500/20 hover:text-rose-300 transition-all"
+                >
+                  <span>Close</span>
                 </button>
               </>
             ) : (
               <button
                 type="button"
-                onClick={() => handlePushToRepository(false)}
-                disabled={isSubmitting}
-                className="px-6 py-2.5 rounded-xl text-xs font-semibold bg-brand-600 hover:bg-brand-500 text-white shadow-lg shadow-brand-600/30 transition-all hover:scale-[1.02] flex items-center gap-2"
+                onClick={handleStartSession}
+                disabled={isStartingSession}
+                className="px-4 py-1.5 rounded-xl text-xs font-semibold bg-gradient-to-r from-brand-600 to-cyan-600 hover:from-brand-500 hover:to-cyan-500 text-white flex items-center space-x-2 transition-all shadow-md shadow-brand-900/40 disabled:opacity-50"
               >
-                <CheckCircle2 className="w-4 h-4" />
-                <span>Push Element to Repository</span>
+                {isStartingSession ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Launching Browser...</span>
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-3.5 h-3.5" />
+                    <span>Launch & Start Capture</span>
+                  </>
+                )}
               </button>
+            )}
+
+            <div className="h-4 w-px bg-slate-800 mx-1" />
+
+            <button
+              type="button"
+              onClick={openReviewModal}
+              disabled={capturedElements.length === 0}
+              className="px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-cyan-600 hover:bg-cyan-500 text-white flex items-center space-x-1.5 transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-md shadow-cyan-900/30"
+            >
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              <span>Review & Push ({capturedElements.length})</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Global Banner Messages */}
+        {errorMsg && (
+          <div className="px-6 py-2 bg-rose-500/10 border-b border-rose-500/30 flex items-center justify-between text-xs text-rose-300 shrink-0">
+            <div className="flex items-center space-x-2">
+              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+              <span>{errorMsg}</span>
+            </div>
+            <button onClick={() => setErrorMsg(null)} className="text-rose-400 hover:text-rose-200">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
+        {successMsg && (
+          <div className="px-6 py-2 bg-emerald-500/10 border-b border-emerald-500/30 flex items-center justify-between text-xs text-emerald-300 shrink-0">
+            <div className="flex items-center space-x-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>{successMsg}</span>
+            </div>
+            <button onClick={() => setSuccessMsg(null)} className="text-emerald-400 hover:text-emerald-200">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
+        {/* Main Body Split Panel */}
+        <div className="flex-1 flex overflow-hidden">
+          {/* Left Panel: Captured Elements List */}
+          <div className="w-80 sm:w-96 border-r border-slate-800/80 bg-slate-950/70 flex flex-col shrink-0">
+            {/* Header with Search and Clear */}
+            <div className="p-3.5 border-b border-slate-800/70 flex flex-col space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+                    Captured Elements
+                  </h3>
+                  <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-slate-800 text-slate-300 border border-slate-700">
+                    {capturedElements.length}
+                  </span>
+                </div>
+
+                <div className="flex items-center space-x-1.5">
+                  <div className="relative group">
+                    <button
+                      type="button"
+                      className="px-2 py-1 rounded-lg text-[11px] font-medium bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 flex items-center space-x-1 transition-colors"
+                    >
+                      <Plus className="w-3 h-3 text-brand-400" />
+                      <span>Sample</span>
+                    </button>
+                    <div className="absolute right-0 top-full mt-1 hidden group-hover:block z-20 w-48 py-1.5 bg-slate-900 border border-slate-800 rounded-xl shadow-xl">
+                      {SAMPLE_ELEMENTS.map((s, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => handleLoadSample(s)}
+                          className="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-brand-600 hover:text-white transition-colors"
+                        >
+                          + {s.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {capturedElements.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleClearAll}
+                      className="px-2 py-1 rounded-lg text-[11px] text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
+                      title="Clear all captured elements"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Search filter */}
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  placeholder="Filter elements..."
+                  className="w-full pl-8 pr-3 py-1 rounded-lg bg-slate-900 border border-slate-800 focus:border-brand-500 text-slate-300 text-xs"
+                />
+              </div>
+            </div>
+
+            {/* Elements Scrollable List */}
+            <div className="flex-1 overflow-y-auto p-2.5 space-y-2">
+              {filteredCapturedElements.length === 0 ? (
+                <div className="h-full flex flex-col items-center justify-center p-6 text-center text-slate-500">
+                  <div className="w-12 h-12 rounded-2xl bg-slate-900/80 border border-slate-800 flex items-center justify-center mb-3 text-slate-600">
+                    <Crosshair className="w-6 h-6" />
+                  </div>
+                  <h4 className="text-xs font-semibold text-slate-300">No Elements Captured Yet</h4>
+                  <p className="text-[11px] text-slate-400 mt-1 max-w-[220px]">
+                    Click "Launch & Start Capture" above and click any element in the live browser. Each click continuously records into this list.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => handleLoadSample(SAMPLE_ELEMENTS[0])}
+                    className="mt-4 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-900 border border-slate-800 text-brand-400 hover:bg-brand-500/10 hover:border-brand-500/30 transition-colors"
+                  >
+                    + Load Demo Sample
+                  </button>
+                </div>
+              ) : (
+                filteredCapturedElements.map((el, idx) => {
+                  const isSelected = el.id === selectedElementId;
+                  return (
+                    <div
+                      key={el.id}
+                      onClick={() => setSelectedElementId(el.id)}
+                      className={`group relative p-3 rounded-xl border cursor-pointer transition-all ${
+                        isSelected
+                          ? 'bg-slate-900/90 border-brand-500/60 shadow-md shadow-brand-950/40 ring-1 ring-brand-500/30'
+                          : 'bg-slate-900/40 border-slate-800/80 hover:bg-slate-900/70 hover:border-slate-700/80'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center space-x-2 min-w-0">
+                          <span className="w-5 h-5 rounded-md bg-slate-800 text-slate-300 text-[10px] font-bold flex items-center justify-center shrink-0 border border-slate-700">
+                            #{el.sequence || idx + 1}
+                          </span>
+                          <span className="text-xs font-bold text-white truncate group-hover:text-brand-300">
+                            {el.name}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center space-x-1 shrink-0">
+                          {el.pushed ? (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 flex items-center gap-1">
+                              <Check className="w-2.5 h-2.5" />
+                              Pushed
+                            </span>
+                          ) : (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-cyan-500/10 border border-cyan-500/20 text-cyan-400">
+                              Ready
+                            </span>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={e => {
+                              e.stopPropagation();
+                              handleDeleteElement(el.id);
+                            }}
+                            className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 opacity-0 group-hover:opacity-100 transition-opacity"
+                            title="Delete this element from capture session"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center space-x-2 mt-2 text-[11px] text-slate-400">
+                        <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-mono text-[10px]">
+                          &lt;{el.tag || 'div'}&gt;
+                        </span>
+                        <span className="text-slate-400">{el.type}</span>
+                        <span className="text-slate-600">•</span>
+                        <span className="text-slate-400">{el.locators.length} locators</span>
+                      </div>
+
+                      {el.referenceMode && el.referenceData && (
+                        <div className="mt-1.5 text-[10px] text-amber-400/90 truncate">
+                          Rel to &lt;{el.referenceData.refTag}&gt; "{el.referenceData.refText?.slice(0, 16)}"
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          {/* Right Panel: Selected Element Details & Locator Management */}
+          <div className="flex-1 flex flex-col bg-slate-900/30 overflow-y-auto">
+            {selectedElement ? (
+              <div className="p-6 space-y-6">
+                {/* Element Information Card */}
+                <div className="bg-slate-950/80 border border-slate-800/80 rounded-2xl p-5 space-y-4 shadow-lg">
+                  <div className="flex items-center justify-between pb-3 border-b border-slate-800/80">
+                    <div className="flex items-center space-x-2.5">
+                      <div className="w-8 h-8 rounded-lg bg-brand-500/10 border border-brand-500/20 text-brand-400 flex items-center justify-center font-bold text-xs">
+                        #{selectedElement.sequence}
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-bold text-white">Element Details & Target Configuration</h3>
+                        <p className="text-[11px] text-slate-400">Configure element identity and destination page in repository</p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center space-x-2">
+                      <button
+                        type="button"
+                        onClick={handlePushSingle}
+                        disabled={isSubmittingSingle}
+                        className="px-4 py-1.5 rounded-xl text-xs font-semibold bg-brand-600 hover:bg-brand-500 text-white flex items-center space-x-1.5 transition-all shadow-md shadow-brand-900/40 disabled:opacity-50"
+                      >
+                        {isSubmittingSingle ? (
+                          <>
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                            <span>Pushing...</span>
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            <span>Push Element to Repository</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-xs font-medium text-slate-300 mb-1">
+                        Element Name <span className="text-rose-400">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={selectedElement.name}
+                        onChange={e => updateSelectedElement({ name: e.target.value })}
+                        className="w-full px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 focus:border-brand-500 text-slate-100 text-xs"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-medium text-slate-300 mb-1">
+                        Element Type <span className="text-rose-400">*</span>
+                      </label>
+                      <select
+                        value={selectedElement.type}
+                        onChange={e => updateSelectedElement({ type: e.target.value as ElementType })}
+                        className="w-full px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 focus:border-brand-500 text-slate-100 text-xs"
+                      >
+                        {ELEMENT_TYPES.map(t => (
+                          <option key={t} value={t}>{t}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-medium text-slate-300 mb-1">
+                        Target Page in Repository <span className="text-rose-400">*</span>
+                      </label>
+                      <select
+                        value={selectedElement.targetPageId || defaultPageId}
+                        onChange={e => updateSelectedElement({ targetPageId: e.target.value })}
+                        className="w-full px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 focus:border-brand-500 text-slate-100 text-xs"
+                      >
+                        {pages.map(p => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-slate-300 mb-1">
+                      Description & Notes
+                    </label>
+                    <input
+                      type="text"
+                      value={selectedElement.description || ''}
+                      onChange={e => updateSelectedElement({ description: e.target.value })}
+                      placeholder="Optional notes or context for automated test scripts..."
+                      className="w-full px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 focus:border-brand-500 text-slate-300 text-xs"
+                    />
+                  </div>
+                </div>
+
+                {/* Locator Strategies Management Section */}
+                <div className="bg-slate-950/80 border border-slate-800/80 rounded-2xl p-5 space-y-4 shadow-lg">
+                  <div className="flex items-center justify-between pb-3 border-b border-slate-800/80">
+                    <div className="flex items-center space-x-2.5">
+                      <div className="w-8 h-8 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 flex items-center justify-center font-bold text-xs">
+                        <Code2 className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <div className="flex items-center space-x-2">
+                          <h3 className="text-sm font-bold text-white">Locator Strategies & Prioritization</h3>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-cyan-400 border border-slate-700">
+                            {selectedElement.locators.length} Strategies
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-400">
+                          Primary locator is executed first by Playwright. Lower priority locators act as automatic self-healing fallbacks.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center space-x-2">
+                      <button
+                        type="button"
+                        onClick={handleAddCustomLocator}
+                        className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-200 flex items-center space-x-1.5 transition-colors"
+                      >
+                        <Plus className="w-3.5 h-3.5 text-cyan-400" />
+                        <span>Add Custom Locator</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Locator Table */}
+                  <div className="border border-slate-800/90 rounded-xl overflow-hidden bg-slate-950">
+                    <table className="w-full text-left text-xs">
+                      <thead>
+                        <tr className="bg-slate-900/80 border-b border-slate-800 text-slate-400 font-semibold text-[11px]">
+                          <th className="py-2.5 px-3 w-10 text-center">Primary</th>
+                          <th className="py-2.5 px-3 w-16 text-center">Priority</th>
+                          <th className="py-2.5 px-3 w-36">Strategy Type</th>
+                          <th className="py-2.5 px-3">Locator Value / Expression</th>
+                          <th className="py-2.5 px-3 w-28 text-center">Stability</th>
+                          <th className="py-2.5 px-3 w-24 text-center">DOM Match</th>
+                          <th className="py-2.5 px-3 w-40 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/60">
+                        {selectedElement.locators.map((loc, idx) => {
+                          const isPrimary = loc.isPrimary;
+                          const isTesting = testingLocatorId === loc.id;
+                          const isHighlighting = highlightingLocatorId === loc.id;
+                          const isCopied = copiedLocatorId === loc.id;
+
+                          return (
+                            <tr
+                              key={loc.id}
+                              className={`group hover:bg-slate-900/50 transition-colors ${
+                                isPrimary ? 'bg-brand-500/[0.04]' : ''
+                              }`}
+                            >
+                              {/* Primary Star */}
+                              <td className="py-2.5 px-3 text-center">
+                                <button
+                                  type="button"
+                                  onClick={() => handleSetPrimary(loc.id)}
+                                  className={`p-1 rounded-lg transition-transform hover:scale-110 ${
+                                    isPrimary
+                                      ? 'text-amber-400 hover:text-amber-300'
+                                      : 'text-slate-600 hover:text-amber-400/80'
+                                  }`}
+                                  title={isPrimary ? 'Primary Locator (Target Priority 1)' : 'Click to set as Primary locator'}
+                                >
+                                  <Star className={`w-4 h-4 ${isPrimary ? 'fill-amber-400' : ''}`} />
+                                </button>
+                              </td>
+
+                              {/* Priority controls */}
+                              <td className="py-2.5 px-3 text-center">
+                                <div className="flex items-center justify-center space-x-0.5">
+                                  <span className="font-mono text-slate-400 text-xs font-bold w-4">
+                                    {idx + 1}
+                                  </span>
+                                  <div className="flex flex-col">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleMovePriority(idx, 'up')}
+                                      disabled={idx === 0}
+                                      className="text-slate-500 hover:text-white disabled:opacity-20 disabled:hover:text-slate-500"
+                                    >
+                                      <ArrowUp className="w-3 h-3" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleMovePriority(idx, 'down')}
+                                      disabled={idx === selectedElement.locators.length - 1}
+                                      className="text-slate-500 hover:text-white disabled:opacity-20 disabled:hover:text-slate-500"
+                                    >
+                                      <ArrowDown className="w-3 h-3" />
+                                    </button>
+                                  </div>
+                                </div>
+                              </td>
+
+                              {/* Strategy Type Dropdown */}
+                              <td className="py-2.5 px-3">
+                                <select
+                                  value={loc.type}
+                                  onChange={e => handleUpdateLocator(loc.id, { type: e.target.value as LocatorType })}
+                                  className="w-full px-2 py-1 rounded-lg bg-slate-900 border border-slate-800 text-slate-200 text-xs font-medium focus:border-brand-500"
+                                >
+                                  {LOCATOR_TYPES.map(t => (
+                                    <option key={t} value={t}>{t}</option>
+                                  ))}
+                                </select>
+                              </td>
+
+                              {/* Locator Value Input */}
+                              <td className="py-2.5 px-3">
+                                <div className="relative flex items-center">
+                                  <input
+                                    type="text"
+                                    value={loc.value}
+                                    onChange={e => handleUpdateLocator(loc.id, { value: e.target.value })}
+                                    className="w-full font-mono text-xs px-2.5 py-1 rounded-lg bg-slate-900/90 border border-slate-800 text-slate-100 focus:border-brand-500 focus:bg-slate-900"
+                                  />
+                                  {loc.valueType === 'Dynamic' && (
+                                    <span className="absolute right-2 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                      Dynamic
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
+
+                              {/* Stability Badge with popover reasons */}
+                              <td className="py-2.5 px-3 text-center">
+                                <div className="relative group/stab inline-block">
+                                  <span
+                                    className={`px-2 py-0.5 rounded-full text-[11px] font-bold border cursor-help ${
+                                      loc.stability === 'High'
+                                        ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                                        : loc.stability === 'Moderate'
+                                        ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                                        : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+                                    }`}
+                                  >
+                                    {loc.stabilityScore}/100 {loc.stability}
+                                  </span>
+
+                                  {/* Popover tooltip */}
+                                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover/stab:block z-30 w-56 p-2.5 bg-slate-950 border border-slate-800 rounded-xl shadow-2xl text-left text-[11px] text-slate-300 pointer-events-none">
+                                    <div className="font-bold text-white mb-1">Stability Assessment:</div>
+                                    <ul className="list-disc list-inside space-y-0.5 text-slate-400">
+                                      {(loc.reasons || ['Evaluated based on selector resilience']).map((r, i) => (
+                                        <li key={i}>{r}</li>
+                                      ))}
+                                    </ul>
+                                    {loc.feedback && (
+                                      <div className="mt-1.5 pt-1.5 border-t border-slate-800 text-brand-300">
+                                        💡 {loc.feedback}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              </td>
+
+                              {/* DOM Match Result */}
+                              <td className="py-2.5 px-3 text-center">
+                                {loc.matchCount === 1 ? (
+                                  <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                                    1 Unique
+                                  </span>
+                                ) : loc.matchCount > 1 ? (
+                                  <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                                    {loc.matchCount} Matches
+                                  </span>
+                                ) : loc.matchCount === 0 ? (
+                                  <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-rose-500/15 text-rose-400 border border-rose-500/30">
+                                    0 Found
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-500 text-[11px]">Untested</span>
+                                )}
+                              </td>
+
+                              {/* Action Buttons */}
+                              <td className="py-2.5 px-3 text-right">
+                                <div className="flex items-center justify-end space-x-1">
+                                  {/* Highlight in live browser */}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleHighlightLocator(loc)}
+                                    disabled={isHighlighting}
+                                    className={`p-1.5 rounded-lg border text-slate-300 hover:text-white transition-all ${
+                                      isHighlighting
+                                        ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300 animate-pulse'
+                                        : 'bg-slate-900 border-slate-800 hover:bg-slate-800'
+                                    }`}
+                                    title="Highlight and pulse element in live browser"
+                                  >
+                                    <Eye className="w-3.5 h-3.5" />
+                                  </button>
+
+                                  {/* Test Locator against live DOM */}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleTestLocator(loc)}
+                                    disabled={isTesting}
+                                    className={`p-1.5 rounded-lg border text-slate-300 hover:text-white transition-all ${
+                                      isTesting
+                                        ? 'bg-brand-500/20 border-brand-500/40 text-brand-300'
+                                        : 'bg-slate-900 border-slate-800 hover:bg-slate-800'
+                                    }`}
+                                    title="Test locator against live browser DOM"
+                                  >
+                                    {isTesting ? (
+                                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                    ) : (
+                                      <Play className="w-3.5 h-3.5" />
+                                    )}
+                                  </button>
+
+                                  {/* Copy locator string */}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCopyLocator(loc)}
+                                    className="p-1.5 rounded-lg bg-slate-900 border border-slate-800 hover:bg-slate-800 text-slate-300 hover:text-white transition-colors"
+                                    title="Copy locator value to clipboard"
+                                  >
+                                    {isCopied ? (
+                                      <Check className="w-3.5 h-3.5 text-emerald-400" />
+                                    ) : (
+                                      <Copy className="w-3.5 h-3.5" />
+                                    )}
+                                  </button>
+
+                                  {/* Delete single locator */}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteLocator(loc.id)}
+                                    className="p-1.5 rounded-lg bg-slate-900 border border-slate-800 hover:bg-rose-500/10 hover:border-rose-500/30 text-slate-400 hover:text-rose-400 transition-colors"
+                                    title="Delete this locator only (does not delete element)"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-slate-500">
+                <Monitor className="w-12 h-12 text-slate-700 mb-3" />
+                <h4 className="text-sm font-semibold text-slate-300">No Element Selected</h4>
+                <p className="text-xs text-slate-500 max-w-sm mt-1">
+                  Select an element from the left panel to review and manage its locators, or launch the browser to capture new elements.
+                </p>
+              </div>
             )}
           </div>
         </div>
+
+        {/* Modal Bottom Footer */}
+        <div className="px-6 py-3 bg-slate-950 border-t border-slate-800/80 flex items-center justify-between text-xs text-slate-400 shrink-0">
+          <div className="flex items-center space-x-2">
+            <span className="w-2 h-2 rounded-full bg-cyan-400" />
+            <span>
+              {capturedElements.length} elements in session ({capturedElements.filter(e => e.pushed).length} pushed to repository)
+            </span>
+          </div>
+
+          <div className="flex items-center space-x-3">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-1.5 rounded-xl text-xs text-slate-400 hover:text-white hover:bg-slate-850 transition-colors"
+            >
+              Done & Exit
+            </button>
+            <button
+              type="button"
+              onClick={openReviewModal}
+              disabled={capturedElements.length === 0}
+              className="px-5 py-1.5 rounded-xl text-xs font-semibold bg-brand-600 hover:bg-brand-500 text-white transition-all shadow-md shadow-brand-900/40 disabled:opacity-40"
+            >
+              Review & Push Elements
+            </button>
+          </div>
+        </div>
       </div>
+
+      {/* Review & Batch Push Modal */}
+      {isReviewModalOpen && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
+          <div className="bg-slate-950 border border-slate-800 rounded-2xl w-full max-w-4xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden">
+            <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-900/90">
+              <div className="flex items-center space-x-3">
+                <div className="w-9 h-9 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 flex items-center justify-center">
+                  <CheckCircle2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">Review & Push to Repository</h3>
+                  <p className="text-xs text-slate-400">
+                    Select the elements to push into your project's repository pages
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsReviewModalOpen(false)}
+                className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-4 bg-slate-900/40 border-b border-slate-800 flex items-center justify-between">
+              <button
+                type="button"
+                onClick={handleToggleSelectAll}
+                className="flex items-center space-x-2 text-xs text-slate-300 hover:text-white"
+              >
+                {capturedElements.every(e => selectedForPush[e.id]) ? (
+                  <CheckSquare className="w-4 h-4 text-brand-400" />
+                ) : (
+                  <Square className="w-4 h-4 text-slate-500" />
+                )}
+                <span>Select All ({capturedElements.length} elements)</span>
+              </button>
+
+              <span className="text-xs text-slate-400">
+                {Object.values(selectedForPush).filter(Boolean).length} of {capturedElements.length} selected
+              </span>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-2.5">
+              {capturedElements.map(el => {
+                const isChecked = !!selectedForPush[el.id];
+                const pageId = targetPageOverrides[el.id] || el.targetPageId || defaultPageId;
+                const safeExisting = Array.isArray(existingElements) ? existingElements : [];
+                const duplicate = safeExisting.find(
+                  e => e && e.pageId === pageId && (e.name || '').trim().toLowerCase() === el.name.trim().toLowerCase()
+                );
+                const primaryLoc = el.locators.find(l => l.isPrimary) || el.locators[0];
+
+                return (
+                  <div
+                    key={el.id}
+                    className={`p-3.5 rounded-xl border transition-all ${
+                      isChecked
+                        ? 'bg-slate-900/80 border-slate-700'
+                        : 'bg-slate-950 border-slate-850 opacity-60'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="flex items-center space-x-3 min-w-0">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setSelectedForPush(prev => ({ ...prev, [el.id]: !prev[el.id] }))
+                          }
+                          className="text-slate-400 hover:text-white shrink-0"
+                        >
+                          {isChecked ? (
+                            <CheckSquare className="w-4 h-4 text-brand-400" />
+                          ) : (
+                            <Square className="w-4 h-4 text-slate-500" />
+                          )}
+                        </button>
+
+                        <div className="min-w-0">
+                          <div className="flex items-center space-x-2">
+                            <span className="text-xs font-bold text-white truncate">{el.name}</span>
+                            <span className="px-1.5 py-0.5 rounded text-[10px] bg-slate-800 text-slate-300 font-mono">
+                              &lt;{el.tag}&gt;
+                            </span>
+                            <span className="text-xs text-slate-400">({el.type})</span>
+                          </div>
+                          {primaryLoc && (
+                            <div className="text-[11px] font-mono text-cyan-400 truncate mt-0.5">
+                              {primaryLoc.type}: {primaryLoc.value}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center space-x-3 shrink-0">
+                        {duplicate && (
+                          <div className="flex items-center space-x-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-500/15 border border-amber-500/30 text-amber-300">
+                            <AlertTriangle className="w-3 h-3 text-amber-400 shrink-0" />
+                            <span>Will Overwrite Existing</span>
+                          </div>
+                        )}
+
+                        <div className="flex items-center space-x-1.5">
+                          <span className="text-xs text-slate-400">Page:</span>
+                          <select
+                            value={pageId}
+                            onChange={e =>
+                              setTargetPageOverrides(prev => ({ ...prev, [el.id]: e.target.value }))
+                            }
+                            className="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-700 text-slate-200 text-xs focus:border-brand-500"
+                          >
+                            {pages.map(p => (
+                              <option key={p.id} value={p.id}>
+                                {p.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="px-6 py-3.5 bg-slate-900/90 border-t border-slate-800 flex items-center justify-between">
+              <button
+                type="button"
+                onClick={() => setIsReviewModalOpen(false)}
+                className="px-4 py-2 text-xs text-slate-400 hover:text-white"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handlePushBatch}
+                disabled={isPushingBatch || Object.values(selectedForPush).filter(Boolean).length === 0}
+                className="px-5 py-2 rounded-xl text-xs font-semibold bg-brand-600 hover:bg-brand-500 text-white flex items-center space-x-2 transition-all shadow-md shadow-brand-900/40 disabled:opacity-50"
+              >
+                {isPushingBatch ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Pushing Elements to Repository...</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>Push ({Object.values(selectedForPush).filter(Boolean).length}) Elements to Repository</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
-

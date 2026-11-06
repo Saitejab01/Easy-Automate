@@ -40,6 +40,34 @@ export const electronAPI = {
     inspectElement: (url: string) =>
       ipcRenderer.invoke('repository:inspectElement', { url }),
   },
+  finder: {
+    startSession: (url: string, browserType?: 'chromium' | 'firefox' | 'webkit', captureMode?: 'normal' | 'reference') =>
+      ipcRenderer.invoke('finder:startSession', { url, browserType, captureMode }),
+    pauseCapture: () =>
+      ipcRenderer.invoke('finder:pauseCapture'),
+    resumeCapture: () =>
+      ipcRenderer.invoke('finder:resumeCapture'),
+    closeSession: () =>
+      ipcRenderer.invoke('finder:closeSession'),
+    testLocator: (locatorType: string, locatorValue: string) =>
+      ipcRenderer.invoke('finder:testLocator', { locatorType, locatorValue }),
+    highlightLocator: (locatorType: string, locatorValue: string) =>
+      ipcRenderer.invoke('finder:highlightLocator', { locatorType, locatorValue }),
+    setCaptureMode: (mode: 'normal' | 'reference') =>
+      ipcRenderer.invoke('finder:setCaptureMode', mode),
+    getStatus: () =>
+      ipcRenderer.invoke('finder:getStatus'),
+    onElementCaptured: (callback: (element: any) => void) => {
+      const subscription = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('finder:elementCaptured', subscription);
+      return () => ipcRenderer.removeListener('finder:elementCaptured', subscription);
+    },
+    onBrowserDisconnected: (callback: () => void) => {
+      const subscription = () => callback();
+      ipcRenderer.on('finder:browserDisconnected', subscription);
+      return () => ipcRenderer.removeListener('finder:browserDisconnected', subscription);
+    }
+  },
   testData: {
     getFolders: (projectId: string) => ipcRenderer.invoke('testData:getFolders', projectId),
     createFolder: (projectId: string, name: string, parentId?: string | null) =>
