@@ -16,11 +16,13 @@ import {
   CheckCircle2,
   Layers,
   Code2,
-  AlertCircle
+  AlertCircle,
+  Crosshair
 } from 'lucide-react';
 import { api } from '../../api/client';
 import { Project, RepositoryPage, RepositoryElement, Locator, ElementType } from '../../api/types';
 import { ElementDrawer } from './ElementDrawer';
+import { LocatorFinderModal } from './LocatorFinderModal';
 
 interface RepositoryViewProps {
   project: Project;
@@ -37,6 +39,7 @@ export const RepositoryView: React.FC<RepositoryViewProps> = ({ project }) => {
   // Modals & Drawer State
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [elementToEdit, setElementToEdit] = useState<RepositoryElement | null>(null);
+  const [isFinderOpen, setIsFinderOpen] = useState(false);
 
   // Page Modals
   const [isCreatePageModalOpen, setIsCreatePageModalOpen] = useState(false);
@@ -344,6 +347,15 @@ export const RepositoryView: React.FC<RepositoryViewProps> = ({ project }) => {
 
         <div className="flex items-center gap-3">
           <button
+            onClick={() => setIsFinderOpen(true)}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold bg-gradient-to-r from-purple-600 via-indigo-600 to-brand-600 hover:from-purple-500 hover:to-brand-500 text-white shadow-md shadow-purple-600/25 transition-all hover:scale-[1.02]"
+            title="Open Interactive Locator Finder & Inspector"
+          >
+            <Crosshair className="w-4 h-4" />
+            <span>Locator Finder</span>
+          </button>
+
+          <button
             onClick={() => handleOpenCreatePage(null)}
             className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold bg-slate-900 border border-slate-700/80 hover:bg-slate-800 text-slate-200 transition-colors"
           >
@@ -460,16 +472,25 @@ export const RepositoryView: React.FC<RepositoryViewProps> = ({ project }) => {
                     : 'Add UI element locators (Buttons, Input Fields, Links) to start building automation scripts.'}
                 </p>
                 {!searchQuery && selectedPage && (
-                  <button
-                    onClick={() => {
-                      setElementToEdit(null);
-                      setIsDrawerOpen(true);
-                    }}
-                    className="mt-5 inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold bg-brand-600 hover:bg-brand-500 text-white shadow-sm transition-all"
-                  >
-                    <Plus className="w-4 h-4" />
-                    <span>Add First Element to {selectedPage.name}</span>
-                  </button>
+                  <div className="mt-5 flex items-center justify-center gap-3">
+                    <button
+                      onClick={() => setIsFinderOpen(true)}
+                      className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white shadow-sm transition-all"
+                    >
+                      <Crosshair className="w-4 h-4" />
+                      <span>Open Locator Finder</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        setElementToEdit(null);
+                        setIsDrawerOpen(true);
+                      }}
+                      className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 shadow-sm transition-all"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>Manual Element Drawer</span>
+                    </button>
+                  </div>
                 )}
               </div>
             ) : (
@@ -577,6 +598,21 @@ export const RepositoryView: React.FC<RepositoryViewProps> = ({ project }) => {
         elementToEdit={elementToEdit}
         existingElements={elements}
         onSave={handleSaveElement}
+        onOpenFinder={() => {
+          setIsDrawerOpen(false);
+          setIsFinderOpen(true);
+        }}
+      />
+
+      {/* Interactive Locator Finder & Inspector Modal */}
+      <LocatorFinderModal
+        isOpen={isFinderOpen}
+        onClose={() => setIsFinderOpen(false)}
+        project={project}
+        pages={pages}
+        selectedPageId={selectedPageId}
+        existingElements={elements}
+        onSaveElement={handleSaveElement}
       />
 
       {/* Create Page / Subpage Modal */}

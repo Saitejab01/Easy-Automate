@@ -18,7 +18,8 @@ import {
   ShieldAlert,
   RefreshCw,
   Layers,
-  Activity
+  Activity,
+  Crosshair
 } from 'lucide-react';
 import {
   ElementType,
@@ -37,6 +38,7 @@ interface ElementDrawerProps {
   selectedPageId: string;
   elementToEdit?: RepositoryElement | null;
   existingElements?: RepositoryElement[];
+  onOpenFinder?: () => void;
   onSave: (elementData: {
     name: string;
     type: ElementType;
@@ -86,6 +88,7 @@ export const ElementDrawer: React.FC<ElementDrawerProps> = ({
   selectedPageId,
   elementToEdit,
   existingElements = [],
+  onOpenFinder,
   onSave
 }) => {
   const [name, setName] = useState('');
@@ -615,14 +618,28 @@ export const ElementDrawer: React.FC<ElementDrawerProps> = ({
                 </p>
               </div>
 
-              <button
-                type="button"
-                onClick={handleAddLocator}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-brand-600/20 text-brand-400 border border-brand-500/30 hover:bg-brand-600/30 transition-colors"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Add Fallback</span>
-              </button>
+              <div className="flex items-center gap-2">
+                {onOpenFinder && (
+                  <button
+                    type="button"
+                    onClick={onOpenFinder}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-gradient-to-r from-purple-600/20 to-indigo-600/20 text-purple-300 border border-purple-500/30 hover:bg-purple-600/30 transition-colors"
+                    title="Launch Interactive Locator Finder & Inspector"
+                  >
+                    <Crosshair className="w-3.5 h-3.5 text-purple-400" />
+                    <span>Launch Locator Finder</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={handleAddLocator}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-brand-600/20 text-brand-400 border border-brand-500/30 hover:bg-brand-600/30 transition-colors"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Add Fallback</span>
+                </button>
+              </div>
             </div>
 
             {/* List of Locators */}

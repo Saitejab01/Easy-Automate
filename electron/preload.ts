@@ -37,6 +37,8 @@ export const electronAPI = {
       ipcRenderer.invoke('repository:deleteElement', { elementId, projectId }),
     testLocator: (locatorType: string, locatorValue: string) =>
       ipcRenderer.invoke('repository:testLocator', { locatorType, locatorValue }),
+    inspectElement: (url: string) =>
+      ipcRenderer.invoke('repository:inspectElement', { url }),
   },
   testData: {
     getFolders: (projectId: string) => ipcRenderer.invoke('testData:getFolders', projectId),

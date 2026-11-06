@@ -883,6 +883,13 @@ export const api = {
       } catch (err: any) {
         return { success: false, matchCount: 0, stability: null, error: err.message };
       }
+    },
+
+    async inspectElement(url: string): Promise<{ success: boolean; element?: any; error?: string }> {
+      if (isElectron && (window as any).electronAPI?.repository?.inspectElement) {
+        return (window as any).electronAPI.repository.inspectElement(url);
+      }
+      return { success: false, error: 'Live Playwright inspection requires Electron desktop runtime' };
     }
   },
 
