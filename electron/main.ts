@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, shell, screen } from 'electron';
 import path from 'path';
 import { JsonDatabase } from './database';
 import { AutomationEngine } from './engine/automationEngine';
+import { evaluateLocatorStability } from './locatorEvaluator';
 
 let mainWindow: BrowserWindow | null = null;
 const db = new JsonDatabase();
@@ -231,6 +232,15 @@ ipcMain.handle('repository:deleteElement', async (_event, { elementId, projectId
     return { success: true };
   } catch (err: any) {
     return { success: false, error: err.message || 'Failed to delete element' };
+  }
+});
+
+ipcMain.handle('repository:testLocator', async (_event, { locatorType, locatorValue }: { locatorType: string; locatorValue: string }) => {
+  try {
+    const result = evaluateLocatorStability(locatorType, locatorValue);
+    return { success: true, ...result };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Locator testing failed' };
   }
 });
 

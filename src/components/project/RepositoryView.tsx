@@ -205,11 +205,13 @@ export const RepositoryView: React.FC<RepositoryViewProps> = ({ project }) => {
     description?: string;
     pageId: string;
     locators: Locator[];
+    overwriteElementId?: string;
   }) => {
-    if (elementToEdit) {
-      const res = await api.repository.updateElement(elementToEdit.id, project.id, elementData);
+    const targetId = elementData.overwriteElementId || (elementToEdit ? elementToEdit.id : null);
+    if (targetId) {
+      const res = await api.repository.updateElement(targetId, project.id, elementData);
       if (res.success && res.element) {
-        setElements(elements.map(e => (e.id === elementToEdit.id ? res.element! : e)));
+        setElements(elements.map(e => (e.id === targetId ? res.element! : e)));
         return { success: true };
       }
       return { success: false, error: res.error };
@@ -573,6 +575,7 @@ export const RepositoryView: React.FC<RepositoryViewProps> = ({ project }) => {
         pages={pages}
         selectedPageId={selectedPageId}
         elementToEdit={elementToEdit}
+        existingElements={elements}
         onSave={handleSaveElement}
       />
 

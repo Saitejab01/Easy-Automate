@@ -1627,6 +1627,14 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
                             </div>
                           )}
 
+                          {/* Global Wait Setting Notice for Wait NLPs (Section 6) */}
+                          {step.nlpCategory === 'Wait' && (
+                            <div className="flex items-center gap-1.5 pt-1 text-[11px] text-cyan-400/90 font-medium">
+                              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400"></span>
+                              <span>Configured by Global Wait Settings ({((runSettings.globalWaitTimeMs || 8000) / 1000)}s timeout)</span>
+                            </div>
+                          )}
+
                           {/* Parameter Chips */}
                           {step.parameters && Object.keys(step.parameters).length > 0 && (
                             <div className="flex flex-wrap gap-1.5 pt-1">

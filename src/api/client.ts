@@ -870,6 +870,19 @@ export const api = {
       elements.splice(idx, 1);
       saveLocalElements(elements, projectId);
       return { success: true };
+    },
+
+    async testLocator(locatorType: string, locatorValue: string): Promise<{ success: boolean; matchCount: number; stability: any; error?: string }> {
+      if (isElectron && (window as any).electronAPI?.repository?.testLocator) {
+        return (window as any).electronAPI.repository.testLocator(locatorType, locatorValue);
+      }
+      try {
+        const { evaluateLocatorStability } = await import('../utils/locatorEvaluator');
+        const stability = evaluateLocatorStability(locatorType, locatorValue);
+        return { success: true, matchCount: -1, stability };
+      } catch (err: any) {
+        return { success: false, matchCount: 0, stability: null, error: err.message };
+      }
     }
   },
 

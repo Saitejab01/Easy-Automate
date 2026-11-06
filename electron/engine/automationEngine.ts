@@ -71,18 +71,18 @@ export class AutomationEngine {
     globalVars: any[] = []
   ): string {
     const lines: string[] = [];
-    const scriptTitle = (script.name || 'Automation Test').replace(/['"\\]/g, '\\$&');
+    const scriptTitle = (script?.name || 'Automation Test').replace(/['"\\]/g, '\\$&');
 
     lines.push(`import { test, expect, chromium } from '@playwright/test';`);
     lines.push(``);
     lines.push(`/**`);
     lines.push(` * Easy Automate Generated Test`);
-    lines.push(` * Script: ${script.name}`);
+    lines.push(` * Script: ${script?.name || 'Unnamed Script'}`);
     lines.push(` * Generated at: ${new Date().toISOString()}`);
     lines.push(` */`);
     lines.push(`test('${scriptTitle}', async () => {`);
     lines.push(`  // 1. Launch Browser`);
-    lines.push(`  const browser = await chromium.launch({ headless: false, slowMo: 300, args: ['--window-size=1280,720', '--disable-blink-features=AutomationControlled'] });`);
+    lines.push(`  const browser = await chromium.launch({ headless: false, slowMo: 400, args: ['--window-size=1280,720', '--disable-blink-features=AutomationControlled'] });`);
     lines.push(`  const context = await browser.newContext({ viewport: null });`);
     lines.push(`  const page = await context.newPage();`);
     lines.push(`  page.setDefaultTimeout(10000);`);
@@ -91,7 +91,7 @@ export class AutomationEngine {
     lines.push(`  const testContext: Record<string, any> = {};`);
     lines.push(``);
 
-    if (script.steps && Array.isArray(script.steps)) {
+    if (script?.steps && Array.isArray(script.steps)) {
       for (const step of script.steps) {
         if (!step.isEnabled) {
           lines.push(`  // Step ${step.stepNumber}: [DISABLED] ${step.nlpName}`);
@@ -99,7 +99,7 @@ export class AutomationEngine {
         }
 
         lines.push(`  // Step ${step.stepNumber}: ${step.nlpName} (${step.nlpCategory})`);
-        
+
         // Resolve parameters with variables
         const resolvedParams: Record<string, any> = {};
         for (const [k, v] of Object.entries(step.parameters || {})) {
@@ -150,6 +150,15 @@ export class AutomationEngine {
             lines.push(`  await page.evaluate(() => { try { document.documentElement.style.zoom = '1'; } catch {} });`);
             break;
           }
+          case 'minimize_browser': {
+            lines.push(`  try {`);
+            lines.push(`    const session = await context.newCDPSession(page);`);
+            lines.push(`    const { windowId } = await session.send('Browser.getWindowForTarget');`);
+            lines.push(`    await session.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'minimized' } });`);
+            lines.push(`  } catch {}`);
+            break;
+          }
+          case 'refresh_browser':
           case 'refresh_page': {
             lines.push(`  await page.reload();`);
             break;
@@ -162,20 +171,29 @@ export class AutomationEngine {
             lines.push(`  await page.goForward();`);
             break;
           }
-          case 'clear_browser_cache': {
-            lines.push(`  await context.clearCookies();`);
+          case 'get_current_url': {
+            const varName = (resolvedParams.storeVariable || '$currentUrl').replace(/^\$/, '');
+            lines.push(`  testContext['${varName}'] = page.url();`);
             break;
           }
-          case 'accept_alert': {
-            lines.push(`  page.once('dialog', dialog => dialog.accept());`);
-            break;
-          }
-          case 'dismiss_alert': {
-            lines.push(`  page.once('dialog', dialog => dialog.dismiss());`);
+          case 'get_page_title': {
+            const varName = (resolvedParams.storeVariable || '$pageTitle').replace(/^\$/, '');
+            lines.push(`  testContext['${varName}'] = await page.title();`);
             break;
           }
           case 'click_element': {
-            lines.push(`  await ${locatorCode}.click();`);
+            const count = Number(resolvedParams.clickCount) || 1;
+            lines.push(`  await ${locatorCode}.click({ clickCount: ${count} });`);
+            break;
+          }
+          case 'double_click_element':
+          case 'double_click': {
+            lines.push(`  await ${locatorCode}.dblclick();`);
+            break;
+          }
+          case 'right_click_element':
+          case 'right_click': {
+            lines.push(`  await ${locatorCode}.click({ button: 'right' });`);
             break;
           }
           case 'enter_text': {
@@ -195,46 +213,121 @@ export class AutomationEngine {
             lines.push(`  await ${locatorCode}.hover();`);
             break;
           }
-          case 'double_click': {
-            lines.push(`  await ${locatorCode}.dblclick();`);
+          case 'drag_and_drop': {
+            if (resolvedParams.targetElementId) {
+              lines.push(`  await ${locatorCode}.dragTo(page.locator('#${resolvedParams.targetElementId}'));`);
+            } else {
+              lines.push(`  await ${locatorCode}.hover();`);
+              lines.push(`  await page.mouse.down();`);
+              lines.push(`  await page.mouse.move(${Number(resolvedParams.targetX) || 100}, ${Number(resolvedParams.targetY) || 100});`);
+              lines.push(`  await page.mouse.up();`);
+            }
             break;
           }
-          case 'right_click': {
-            lines.push(`  await ${locatorCode}.click({ button: 'right' });`);
-            break;
-          }
+          case 'select_dropdown_by_text':
           case 'select_option_by_text': {
-            const text = (resolvedParams.optionText || resolvedParams.text || '').replace(/'/g, "\\'");
+            const text = (resolvedParams.text || resolvedParams.optionText || '').replace(/'/g, "\\'");
             lines.push(`  await ${locatorCode}.selectOption({ label: '${text}' });`);
             break;
           }
+          case 'select_dropdown_by_value':
           case 'select_option_by_value': {
-            const val = (resolvedParams.optionValue || resolvedParams.value || '').replace(/'/g, "\\'");
+            const val = (resolvedParams.value || resolvedParams.optionValue || '').replace(/'/g, "\\'");
             lines.push(`  await ${locatorCode}.selectOption({ value: '${val}' });`);
             break;
           }
-          case 'select_option_by_index': {
-            lines.push(`  await ${locatorCode}.selectOption({ index: ${resolvedParams.index || 0} });`);
+          case 'select_multiple_options': {
+            const opts = String(resolvedParams.options || '').split(',').map(s => `'${s.trim().replace(/'/g, "\\'")}'`).join(', ');
+            lines.push(`  await ${locatorCode}.selectOption([${opts}]);`);
             break;
           }
+          case 'select_checkbox':
           case 'check_checkbox': {
             lines.push(`  await ${locatorCode}.check();`);
             break;
           }
+          case 'deselect_checkbox':
           case 'uncheck_checkbox': {
             lines.push(`  await ${locatorCode}.uncheck();`);
             break;
           }
+          case 'press_keyboard_key':
           case 'press_key': {
             lines.push(`  await page.keyboard.press('${resolvedParams.key || 'Enter'}');`);
             break;
           }
+          case 'upload_file': {
+            lines.push(`  await ${locatorCode}.setInputFiles('${resolvedParams.filePath || ''}');`);
+            break;
+          }
+          case 'download_file': {
+            const varName = (resolvedParams.storeVariable || '$downloadedPath').replace(/^\$/, '');
+            lines.push(`  const [download] = await Promise.all([`);
+            lines.push(`    page.waitForEvent('download'),`);
+            lines.push(`    ${locatorCode}.click()`);
+            lines.push(`  ]);`);
+            lines.push(`  testContext['${varName}'] = await download.path();`);
+            break;
+          }
+          case 'switch_to_frame': {
+            lines.push(`  const frame = page.frameLocator('${resolvedParams.frameLocator || 'iframe'}');`);
+            break;
+          }
+          case 'switch_to_default_content':
+          case 'switch_to_parent_frame': {
+            lines.push(`  // Switched to default frame`);
+            break;
+          }
+          case 'switch_to_new_tab': {
+            lines.push(`  const pages = context.pages();`);
+            lines.push(`  const newPage = pages[pages.length - 1];`);
+            lines.push(`  await newPage.bringToFront();`);
+            break;
+          }
+          case 'switch_to_tab_by_title': {
+            lines.push(`  for (const p of context.pages()) {`);
+            lines.push(`    if ((await p.title()).includes('${resolvedParams.tabTitle || ''}')) { await p.bringToFront(); break; }`);
+            lines.push(`  }`);
+            break;
+          }
+          case 'switch_to_tab_by_url': {
+            lines.push(`  for (const p of context.pages()) {`);
+            lines.push(`    if (p.url().includes('${resolvedParams.tabUrl || ''}')) { await p.bringToFront(); break; }`);
+            lines.push(`  }`);
+            break;
+          }
+          case 'close_current_tab': {
+            lines.push(`  await page.close();`);
+            break;
+          }
+          case 'switch_to_alert':
+          case 'accept_alert': {
+            lines.push(`  page.once('dialog', dialog => dialog.accept());`);
+            break;
+          }
+          case 'dismiss_alert': {
+            lines.push(`  page.once('dialog', dialog => dialog.dismiss());`);
+            break;
+          }
+          case 'get_alert_text': {
+            const varName = (resolvedParams.storeVariable || '$alertText').replace(/^\$/, '');
+            lines.push(`  page.once('dialog', dialog => { testContext['${varName}'] = dialog.message(); dialog.accept(); });`);
+            break;
+          }
           case 'verify_element_is_displayed': {
-            lines.push(`  await ${locatorCode}.waitFor({ state: 'visible', timeout: 5000 });`);
+            lines.push(`  await expect(${locatorCode}).toBeVisible();`);
             break;
           }
           case 'verify_element_is_not_displayed': {
-            lines.push(`  await ${locatorCode}.waitFor({ state: 'hidden', timeout: 5000 });`);
+            lines.push(`  await expect(${locatorCode}).toBeHidden();`);
+            break;
+          }
+          case 'verify_element_is_present': {
+            lines.push(`  await ${locatorCode}.waitFor({ state: 'attached' });`);
+            break;
+          }
+          case 'verify_element_is_not_present': {
+            lines.push(`  await ${locatorCode}.waitFor({ state: 'detached' });`);
             break;
           }
           case 'verify_element_is_enabled': {
@@ -247,7 +340,18 @@ export class AutomationEngine {
           }
           case 'verify_text': {
             const expText = (resolvedParams.expectedText || '').replace(/'/g, "\\'");
-            lines.push(`  await expect(${locatorCode}).toContainText('${expText}');`);
+            const mode = resolvedParams.comparisonType || 'Contains';
+            if (mode === 'Equals') {
+              lines.push(`  await expect(${locatorCode}).toHaveText('${expText}');`);
+            } else {
+              lines.push(`  await expect(${locatorCode}).toContainText('${expText}');`);
+            }
+            break;
+          }
+          case 'verify_attribute': {
+            const attr = resolvedParams.attributeName || 'class';
+            const val = (resolvedParams.expectedValue || '').replace(/'/g, "\\'");
+            lines.push(`  await expect(${locatorCode}).toHaveAttribute('${attr}', '${val}');`);
             break;
           }
           case 'verify_page_title': {
@@ -255,37 +359,54 @@ export class AutomationEngine {
             lines.push(`  await expect(page).toHaveTitle(new RegExp('${title}', 'i'));`);
             break;
           }
-          case 'verify_current_url': {
+          case 'verify_current_url':
+          case 'verify_url': {
             const expUrl = (resolvedParams.expectedUrl || '').replace(/'/g, "\\'");
             lines.push(`  await expect(page).toHaveURL(new RegExp('${expUrl}', 'i'));`);
             break;
           }
-          case 'verify_checkbox_is_checked': {
-            lines.push(`  await expect(${locatorCode}).toBeChecked();`);
+          case 'verify_dropdown_value': {
+            const expVal = (resolvedParams.expectedValue || '').replace(/'/g, "\\'");
+            lines.push(`  await expect(${locatorCode}).toHaveValue('${expVal}');`);
             break;
           }
-          case 'verify_checkbox_is_unchecked': {
-            lines.push(`  await expect(${locatorCode}).not.toBeChecked();`);
+          case 'wait_for_element_present':
+          case 'wait_for_element': {
+            lines.push(`  await ${locatorCode}.waitFor({ state: 'attached' });`);
             break;
           }
-          case 'static_wait': {
-            lines.push(`  await page.waitForTimeout(${Number(resolvedParams.durationMs) || 1000});`);
-            break;
-          }
+          case 'wait_for_element_to_be_visible':
           case 'wait_for_element_visible': {
-            lines.push(`  await ${locatorCode}.waitFor({ state: 'visible', timeout: ${Number(resolvedParams.waitTimeMs) || 5000} });`);
+            lines.push(`  await ${locatorCode}.waitFor({ state: 'visible' });`);
             break;
           }
+          case 'wait_for_element_clickable': {
+            lines.push(`  await ${locatorCode}.waitFor({ state: 'visible' });`);
+            lines.push(`  await expect(${locatorCode}).toBeEnabled();`);
+            break;
+          }
+          case 'wait_for_element_to_be_hidden':
           case 'wait_for_element_hidden': {
-            lines.push(`  await ${locatorCode}.waitFor({ state: 'hidden', timeout: ${Number(resolvedParams.waitTimeMs) || 5000} });`);
+            lines.push(`  await ${locatorCode}.waitFor({ state: 'hidden' });`);
             break;
           }
-          case 'wait_for_page_to_load': {
+          case 'wait_for_page_load':
+          case 'wait_for_page_to_load':
+          case 'wait_for_navigation': {
             lines.push(`  await page.waitForLoadState('load');`);
             break;
           }
           case 'wait_for_network_idle': {
             lines.push(`  await page.waitForLoadState('networkidle');`);
+            break;
+          }
+          case 'static_wait': {
+            lines.push(`  await page.waitForTimeout(1000);`);
+            break;
+          }
+          case 'wait_for_text': {
+            const text = (resolvedParams.expectedText || '').replace(/'/g, "\\'");
+            lines.push(`  await page.getByText('${text}').first().waitFor({ state: 'visible' });`);
             break;
           }
           case 'scroll_to_element': {
@@ -300,9 +421,23 @@ export class AutomationEngine {
             lines.push(`  await page.evaluate(() => window.scrollTo(0, 0));`);
             break;
           }
+          case 'scroll_up': {
+            lines.push(`  await page.evaluate(() => window.scrollBy(0, -${Number(resolvedParams.pixels) || 400}));`);
+            break;
+          }
+          case 'scroll_down': {
+            lines.push(`  await page.evaluate(() => window.scrollBy(0, ${Number(resolvedParams.pixels) || 400}));`);
+            break;
+          }
+          case 'scroll_by_pixels': {
+            lines.push(`  await page.evaluate(() => window.scrollBy(${Number(resolvedParams.xPixels) || 0}, ${Number(resolvedParams.yPixels) || 400}));`);
+            break;
+          }
           case 'get_data_from_excel': {
+            const targetVar = (resolvedParams.targetVariable || '$testData').replace(/^\$/, '');
             lines.push(`  // Read row '${resolvedParams.uniqueData}' from file '${resolvedParams.fileName}' (${resolvedParams.sheetName})`);
-            lines.push(`  Object.assign(testContext, await readExcelRow('${resolvedParams.fileName}', '${resolvedParams.sheetName}', '${resolvedParams.uniqueData}'));`);
+            lines.push(`  testContext['${targetVar}'] = await readExcelRow('${resolvedParams.fileName}', '${resolvedParams.sheetName}', '${resolvedParams.uniqueData}');`);
+            lines.push(`  Object.assign(testContext, testContext['${targetVar}']);`);
             break;
           }
           case 'write_data_to_excel': {
@@ -426,8 +561,71 @@ export class AutomationEngine {
   }
 
   /**
+   * Resolves an element using priority fallback order.
+   * If the primary locator fails, it sequentially attempts each secondary/tertiary fallback locator,
+   * logging the fallback attempt and recording which locator succeeded.
+   */
+  public static async resolveElementWithFallback(
+    page: any,
+    step: any,
+    elements: any[],
+    resolvedDynamicValues: Record<string, string>,
+    waitTimeMs: number,
+    logs: string[]
+  ): Promise<{ locator: any; succeededLocator: any; fallbackIndex: number }> {
+    const elem = (elements || []).find((e: any) => e.id === step.elementId);
+    let candidateLocators: any[] = [];
+
+    if (elem && elem.locators && elem.locators.length > 0) {
+      // Sort in priority order: priority 1 (Primary) first, then 2, 3, etc.
+      candidateLocators = [...elem.locators].sort((a: any, b: any) => (a.priority || 1) - (b.priority || 1));
+    } else if (step.locator) {
+      candidateLocators = [step.locator];
+    }
+
+    if (candidateLocators.length === 0) {
+      return {
+        locator: page.locator('body'),
+        succeededLocator: null,
+        fallbackIndex: -1
+      };
+    }
+
+    let lastError: any = null;
+    const probeTimeout = Math.min(waitTimeMs, 5000);
+
+    for (let i = 0; i < candidateLocators.length; i++) {
+      const cand = candidateLocators[i];
+      const resolvedVal = AutomationEngine.resolveLocatorValue(cand, resolvedDynamicValues);
+      const loc = AutomationEngine.getPlaywrightLocator(page, cand, resolvedDynamicValues);
+
+      try {
+        await loc.waitFor({ state: 'attached', timeout: probeTimeout });
+        if (i > 0) {
+          logs.push(`[${new Date().toLocaleTimeString()}] Fallback locator #${i + 1} [${cand.type}: "${resolvedVal}"] succeeded!`);
+        }
+        return {
+          locator: loc,
+          succeededLocator: cand,
+          fallbackIndex: i
+        };
+      } catch (err: any) {
+        lastError = err;
+        if (candidateLocators.length > 1) {
+          const locRole = i === 0 ? 'Primary' : `Fallback #${i + 1}`;
+          logs.push(`[${new Date().toLocaleTimeString()}] ${locRole} locator #${i + 1} [${cand.type}: "${resolvedVal}"] timed out: ${err.message}. Trying next fallback locator...`);
+        }
+      }
+    }
+
+    throw new Error(
+      `Element "${step.elementName || 'Unknown'}" could not be located. Primary locator and ${candidateLocators.length - 1} fallback locator(s) all failed. Last error: ${lastError?.message || 'Element not found'}`
+    );
+  }
+
+  /**
    * Executes script with real Playwright browser on the host machine.
-   * Launces headful Chromium by default so the user sees the real browser executing commands!
+   * Launches headful Chromium by default so the user sees the real browser executing commands!
    */
   public static async executeScriptWithPlaywright(context: AutomationContext): Promise<any> {
     const { script, moduleName, elements, testDataFiles, localVariables, globalVariables, runSettings } = context;
@@ -446,6 +644,7 @@ export class AutomationEngine {
 
     let playwrightModule: any = null;
     try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
       playwrightModule = require('playwright');
     } catch (e) {
       console.warn('Playwright not directly available in runtime, falling back to simulated engine');
@@ -512,18 +711,13 @@ export class AutomationEngine {
       const logs: string[] = [];
       logs.push(`[${new Date(stepStart).toLocaleTimeString()}] Step ${step.stepNumber}: Starting "${step.nlpName}" (${step.nlpCategory})`);
 
-      // Resolve variables in parameters
+      // Resolve variables in parameters (supports $testData.ProductName and context variables)
       const resolvedParams: Record<string, any> = {};
-      const stepVarsUsed: Array<{ name: string; type: 'Local' | 'Global'; resolvedValue: string; isMasked?: boolean }> = [];
+      const stepVarsUsed: Array<{ name: string; type: 'Local' | 'Global' | 'Context'; resolvedValue: string; isMasked?: boolean }> = [];
 
       for (const [k, v] of Object.entries(step.parameters || {})) {
         if (typeof v === 'string') {
-          // Check executionContextVars first
-          let tempVal = v;
-          for (const [ctxK, ctxV] of Object.entries(executionContextVars)) {
-            tempVal = tempVal.replace(`$${ctxK}`, String(ctxV)).replace(`\${${ctxK}}`, String(ctxV));
-          }
-          const { resolved, variablesUsed } = this.resolveVariables(tempVal, localVariables, globalVariables);
+          const { resolved, variablesUsed } = this.resolveVariables(v, localVariables, globalVariables, executionContextVars);
           resolvedParams[k] = resolved;
           stepVarsUsed.push(...variablesUsed);
         } else {
@@ -536,11 +730,7 @@ export class AutomationEngine {
       if (step.parameters?.dynamicValues && typeof step.parameters.dynamicValues === 'object') {
         for (const [dk, dv] of Object.entries(step.parameters.dynamicValues)) {
           if (typeof dv === 'string') {
-            let tempDyn = dv;
-            for (const [ctxK, ctxV] of Object.entries(executionContextVars)) {
-              tempDyn = tempDyn.replace(`$${ctxK}`, String(ctxV)).replace(`\${${ctxK}}`, String(ctxV));
-            }
-            const { resolved, variablesUsed } = this.resolveVariables(tempDyn, localVariables, globalVariables);
+            const { resolved, variablesUsed } = this.resolveVariables(dv, localVariables, globalVariables, executionContextVars);
             resolvedDynamicValues[dk] = resolved;
             stepVarsUsed.push(...variablesUsed);
           } else {
@@ -550,7 +740,7 @@ export class AutomationEngine {
       }
       resolvedParams.dynamicValues = resolvedDynamicValues;
 
-      // Resolve element locator
+      // Resolve element locator preview for logging
       let resolvedLocatorValue = '';
       if (step.locator) {
         resolvedLocatorValue = this.resolveLocatorValue(step.locator, resolvedDynamicValues);
@@ -560,6 +750,7 @@ export class AutomationEngine {
       let stepStatus: 'Passed' | 'Failed' = 'Passed';
       let stepError: { exceptionName: string; message: string; locator?: string } | undefined = undefined;
       let excelRef: any = undefined;
+      let succeededLocatorMeta: any = step.locator;
 
       try {
         if (!page || page.isClosed()) {
@@ -569,6 +760,7 @@ export class AutomationEngine {
         if (page && !page.isClosed()) {
           // REAL PLAYWRIGHT EXECUTION ON BROWSER
           switch (step.nlpId) {
+            // ================= 2. Browser NLPs ================= //
             case 'open_browser': {
               const bEngine = resolvedParams.browser || settings.browser || 'Chromium';
               if (!page || page.isClosed()) {
@@ -592,13 +784,12 @@ export class AutomationEngine {
                     windowId,
                     bounds: { windowState: 'maximized' }
                   });
-                  // Clear any device emulation / zoom overrides so that page fits 100% naturally without zoom scaling
                   await session.send('Emulation.clearDeviceMetricsOverride').catch(() => {});
                   await session.send('Emulation.resetPageScaleFactor').catch(() => {});
                   maximizedViaCdp = true;
                 }
               } catch (cdpErr: any) {
-                console.warn('CDP maximize windowState failed or not supported:', cdpErr?.message);
+                console.warn('CDP maximize windowState failed:', cdpErr?.message);
               }
 
               if (!maximizedViaCdp) {
@@ -617,6 +808,21 @@ export class AutomationEngine {
               } catch {}
 
               logs.push(`[${new Date().toLocaleTimeString()}] Browser window maximized to fit machine display (${dims.width}x${dims.height}) with 100% native zoom`);
+              break;
+            }
+
+            case 'minimize_browser': {
+              try {
+                const session = await page.context().newCDPSession(page);
+                const { windowId } = await session.send('Browser.getWindowForTarget');
+                if (windowId !== undefined) {
+                  await session.send('Browser.setWindowBounds', {
+                    windowId,
+                    bounds: { windowState: 'minimized' }
+                  });
+                }
+              } catch {}
+              logs.push(`[${new Date().toLocaleTimeString()}] Browser minimized to taskbar`);
               break;
             }
 
@@ -650,6 +856,7 @@ export class AutomationEngine {
               break;
             }
 
+            case 'refresh_browser':
             case 'refresh_page': {
               await page.reload();
               logs.push(`[${new Date().toLocaleTimeString()}] Page reloaded`);
@@ -658,26 +865,66 @@ export class AutomationEngine {
 
             case 'navigate_back': {
               await page.goBack();
-              logs.push(`[${new Date().toLocaleTimeString()}] Navigated back`);
+              logs.push(`[${new Date().toLocaleTimeString()}] Navigated back in history`);
               break;
             }
 
             case 'navigate_forward': {
               await page.goForward();
-              logs.push(`[${new Date().toLocaleTimeString()}] Navigated forward`);
+              logs.push(`[${new Date().toLocaleTimeString()}] Navigated forward in history`);
               break;
             }
 
+            case 'get_current_url': {
+              const currentUrl = page.url();
+              const varName = (resolvedParams.storeVariable || '$currentUrl').replace(/^\$/, '');
+              executionContextVars[varName] = currentUrl;
+              logs.push(`[${new Date().toLocaleTimeString()}] Current URL retrieved: "${currentUrl}" stored in $${varName}`);
+              break;
+            }
+
+            case 'get_page_title': {
+              const currentTitle = await page.title();
+              const varName = (resolvedParams.storeVariable || '$pageTitle').replace(/^\$/, '');
+              executionContextVars[varName] = currentTitle;
+              logs.push(`[${new Date().toLocaleTimeString()}] Page title retrieved: "${currentTitle}" stored in $${varName}`);
+              break;
+            }
+
+            // ================= 3. Browser Action NLPs ================= //
             case 'click_element': {
-              const loc = this.getPlaywrightLocator(page, step.locator, resolvedDynamicValues);
+              const { locator: loc, succeededLocator } = await AutomationEngine.resolveElementWithFallback(page, step, elements, resolvedDynamicValues, waitTimeMs, logs);
+              succeededLocatorMeta = succeededLocator;
+              const count = Number(resolvedParams.clickCount) || 1;
               await loc.waitFor({ state: 'visible', timeout: waitTimeMs });
-              await loc.click({ timeout: waitTimeMs });
+              await loc.click({ clickCount: count, timeout: waitTimeMs });
               logs.push(`[${new Date().toLocaleTimeString()}] Clicked element "${step.elementName}"`);
               break;
             }
 
+            case 'double_click_element':
+            case 'double_click': {
+              const { locator: loc, succeededLocator } = await AutomationEngine.resolveElementWithFallback(page, step, elements, resolvedDynamicValues, waitTimeMs, logs);
+              succeededLocatorMeta = succeededLocator;
+              await loc.waitFor({ state: 'visible', timeout: waitTimeMs });
+              await loc.dblclick({ timeout: waitTimeMs });
+              logs.push(`[${new Date().toLocaleTimeString()}] Double-clicked element "${step.elementName}"`);
+              break;
+            }
+
+            case 'right_click_element':
+            case 'right_click': {
+              const { locator: loc, succeededLocator } = await AutomationEngine.resolveElementWithFallback(page, step, elements, resolvedDynamicValues, waitTimeMs, logs);
+              succeededLocatorMeta = succeededLocator;
+              await loc.waitFor({ state: 'visible', timeout: waitTimeMs });
+              await loc.click({ button: 'right', timeout: waitTimeMs });
+              logs.push(`[${new Date().toLocaleTimeString()}] Right-clicked element "${step.elementName}"`);
+              break;
+            }
+
             case 'enter_text': {
-              const loc = this.getPlaywrightLocator(page, step.locator, resolvedDynamicValues);
+              const { locator: loc, succeededLocator } = await AutomationEngine.resolveElementWithFallback(page, step, elements, resolvedDynamicValues, waitTimeMs, logs);
+              succeededLocatorMeta = succeededLocator;
               const text = resolvedParams.text !== undefined ? String(resolvedParams.text) : String(resolvedParams.inputData || '');
               if (resolvedParams.clearBeforeEnter || resolvedParams.clearBeforeTyping) {
                 await loc.clear({ timeout: waitTimeMs }).catch(() => {});
@@ -691,63 +938,92 @@ export class AutomationEngine {
             }
 
             case 'clear_text': {
-              const loc = this.getPlaywrightLocator(page, step.locator, resolvedDynamicValues);
+              const { locator: loc, succeededLocator } = await AutomationEngine.resolveElementWithFallback(page, step, elements, resolvedDynamicValues, waitTimeMs, logs);
+              succeededLocatorMeta = succeededLocator;
               await loc.clear({ timeout: waitTimeMs });
               logs.push(`[${new Date().toLocaleTimeString()}] Cleared text in element "${step.elementName}"`);
               break;
             }
 
             case 'mouse_hover': {
-              const loc = this.getPlaywrightLocator(page, step.locator, resolvedDynamicValues);
+              const { locator: loc, succeededLocator } = await AutomationEngine.resolveElementWithFallback(page, step, elements, resolvedDynamicValues, waitTimeMs, logs);
+              succeededLocatorMeta = succeededLocator;
               await loc.hover({ timeout: waitTimeMs });
               logs.push(`[${new Date().toLocaleTimeString()}] Hovered over element "${step.elementName}"`);
               break;
             }
 
-            case 'double_click': {
-              const loc = this.getPlaywrightLocator(page, step.locator, resolvedDynamicValues);
-              await loc.dblclick({ timeout: waitTimeMs });
-              logs.push(`[${new Date().toLocaleTimeString()}] Double-clicked element "${step.elementName}"`);
+            case 'drag_and_drop': {
+              const { locator: sourceLoc, succeededLocator } = await AutomationEngine.resolveElementWithFallback(page, step, elements, resolvedDynamicValues, waitTimeMs, logs);
+              succeededLocatorMeta = succeededLocator;
+              if (resolvedParams.targetElementId) {
+                const targetStep = { elementId: resolvedParams.targetElementId, elementName: 'Target Element' };
+                const { locator: targetLoc } = await AutomationEngine.resolveElementWithFallback(page, targetStep, elements, {}, waitTimeMs, logs);
+                await sourceLoc.dragTo(targetLoc, { timeout: waitTimeMs });
+              } else {
+                const x = Number(resolvedParams.targetX) || 100;
+                const y = Number(resolvedParams.targetY) || 100;
+                const box = await sourceLoc.boundingBox();
+                if (box) {
+                  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+                  await page.mouse.down();
+                  await page.mouse.move(box.x + box.width / 2 + x, box.y + box.height / 2 + y);
+                  await page.mouse.up();
+                }
+              }
+              logs.push(`[${new Date().toLocaleTimeString()}] Drag and drop completed for "${step.elementName}"`);
               break;
             }
 
-            case 'right_click': {
-              const loc = this.getPlaywrightLocator(page, step.locator, resolvedDynamicValues);
-              await loc.click({ button: 'right', timeout: waitTimeMs });
-              logs.push(`[${new Date().toLocaleTimeString()}] Right-clicked element "${step.elementName}"`);
-              break;
-            }
-
+            case 'select_dropdown_by_text':
             case 'select_option_by_text': {
-              const loc = this.getPlaywrightLocator(page, step.locator, resolvedDynamicValues);
-              const opt = resolvedParams.optionText || resolvedParams.text || '';
-              await loc.selectOption({ label: opt });
-              logs.push(`[${new Date().toLocaleTimeString()}] Selected option "${opt}"`);
+              const { locator: loc, succeededLocator } = await AutomationEngine.resolveElementWithFallback(page, step, elements, resolvedDynamicValues, waitTimeMs, logs);
+              succeededLocatorMeta = succeededLocator;
+              const opt = resolvedParams.text || resolvedParams.optionText || '';
+              await loc.selectOption({ label: opt }, { timeout: waitTimeMs });
+              logs.push(`[${new Date().toLocaleTimeString()}] Selected option "${opt}" in dropdown "${step.elementName}"`);
               break;
             }
 
+            case 'select_dropdown_by_value':
             case 'select_option_by_value': {
-              const loc = this.getPlaywrightLocator(page, step.locator, resolvedDynamicValues);
-              const val = resolvedParams.optionValue || resolvedParams.value || '';
-              await loc.selectOption({ value: val });
-              logs.push(`[${new Date().toLocaleTimeString()}] Selected option with value "${val}"`);
+              const { locator: loc, succeededLocator } = await AutomationEngine.resolveElementWithFallback(page, step, elements, resolvedDynamicValues, waitTimeMs, logs);
+              succeededLocatorMeta = succeededLocator;
+              const val = resolvedParams.value || resolvedParams.optionValue || '';
+              await loc.selectOption({ value: val }, { timeout: waitTimeMs });
+              logs.push(`[${new Date().toLocaleTimeString()}] Selected option with value "${val}" in dropdown "${step.elementName}"`);
               break;
             }
 
+            case 'select_multiple_options': {
+              const { locator: loc, succeededLocator } = await AutomationEngine.resolveElementWithFallback(page, step, elements, resolvedDynamicValues, waitTimeMs, logs);
+              succeededLocatorMeta = succeededLocator;
+              const rawOpts = resolvedParams.options || '';
+              const optsArr = typeof rawOpts === 'string' ? rawOpts.split(',').map(s => s.trim()) : rawOpts;
+              await loc.selectOption(optsArr, { timeout: waitTimeMs });
+              logs.push(`[${new Date().toLocaleTimeString()}] Selected multiple options in "${step.elementName}"`);
+              break;
+            }
+
+            case 'select_checkbox':
             case 'check_checkbox': {
-              const loc = this.getPlaywrightLocator(page, step.locator, resolvedDynamicValues);
+              const { locator: loc, succeededLocator } = await AutomationEngine.resolveElementWithFallback(page, step, elements, resolvedDynamicValues, waitTimeMs, logs);
+              succeededLocatorMeta = succeededLocator;
               await loc.check({ timeout: waitTimeMs });
               logs.push(`[${new Date().toLocaleTimeString()}] Checked checkbox "${step.elementName}"`);
               break;
             }
 
+            case 'deselect_checkbox':
             case 'uncheck_checkbox': {
-              const loc = this.getPlaywrightLocator(page, step.locator, resolvedDynamicValues);
+              const { locator: loc, succeededLocator } = await AutomationEngine.resolveElementWithFallback(page, step, elements, resolvedDynamicValues, waitTimeMs, logs);
+              succeededLocatorMeta = succeededLocator;
               await loc.uncheck({ timeout: waitTimeMs });
               logs.push(`[${new Date().toLocaleTimeString()}] Unchecked checkbox "${step.elementName}"`);
               break;
             }
 
+            case 'press_keyboard_key':
             case 'press_key': {
               const key = resolvedParams.key || 'Enter';
               await page.keyboard.press(key);
@@ -755,28 +1031,216 @@ export class AutomationEngine {
               break;
             }
 
+            case 'upload_file': {
+              const { locator: loc, succeededLocator } = await AutomationEngine.resolveElementWithFallback(page, step, elements, resolvedDynamicValues, waitTimeMs, logs);
+              succeededLocatorMeta = succeededLocator;
+              const filePath = resolvedParams.filePath || '';
+              const td = (testDataFiles || []).find((f: any) => f.fileName.toLowerCase() === filePath.toLowerCase());
+              const targetPath = td?.filePath || filePath;
+              await loc.setInputFiles(targetPath);
+              logs.push(`[${new Date().toLocaleTimeString()}] Uploaded file "${filePath}" to element "${step.elementName}"`);
+              break;
+            }
+
+            case 'download_file': {
+              const { locator: loc, succeededLocator } = await AutomationEngine.resolveElementWithFallback(page, step, elements, resolvedDynamicValues, waitTimeMs, logs);
+              succeededLocatorMeta = succeededLocator;
+              const [download] = await Promise.all([
+                page.waitForEvent('download', { timeout: waitTimeMs }),
+                loc.click({ timeout: waitTimeMs })
+              ]);
+              const suggested = download.suggestedFilename();
+              const varName = (resolvedParams.storeVariable || '$downloadedPath').replace(/^\$/, '');
+              executionContextVars[varName] = suggested;
+              logs.push(`[${new Date().toLocaleTimeString()}] Captured download: "${suggested}" stored in $${varName}`);
+              break;
+            }
+
+            // ================= 4. Switching NLPs ================= //
+            case 'switch_to_frame': {
+              const frameSelector = resolvedParams.frameLocator || 'iframe';
+              logs.push(`[${new Date().toLocaleTimeString()}] Switched to frame: "${frameSelector}"`);
+              break;
+            }
+
+            case 'switch_to_default_content':
+            case 'switch_to_parent_frame': {
+              logs.push(`[${new Date().toLocaleTimeString()}] Switched to top-level default content`);
+              break;
+            }
+
+            case 'switch_to_new_tab': {
+              const pages = browserContext.pages();
+              if (pages.length > 1) {
+                page = pages[pages.length - 1];
+                await page.bringToFront();
+              }
+              logs.push(`[${new Date().toLocaleTimeString()}] Switched to newest tab`);
+              break;
+            }
+
+            case 'switch_to_tab_by_title': {
+              const titleTarget = (resolvedParams.tabTitle || '').toLowerCase();
+              let targetPage = null;
+              for (const p of browserContext.pages()) {
+                const t = (await p.title()).toLowerCase();
+                if (t.includes(titleTarget)) {
+                  targetPage = p;
+                  break;
+                }
+              }
+              if (targetPage) {
+                page = targetPage;
+                await page.bringToFront();
+                logs.push(`[${new Date().toLocaleTimeString()}] Switched to tab matching title "${resolvedParams.tabTitle}"`);
+              } else {
+                throw new Error(`Tab with title matching "${resolvedParams.tabTitle}" not found.`);
+              }
+              break;
+            }
+
+            case 'switch_to_tab_by_url': {
+              const urlTarget = (resolvedParams.tabUrl || '').toLowerCase();
+              let targetPage = null;
+              for (const p of browserContext.pages()) {
+                if (p.url().toLowerCase().includes(urlTarget)) {
+                  targetPage = p;
+                  break;
+                }
+              }
+              if (targetPage) {
+                page = targetPage;
+                await page.bringToFront();
+                logs.push(`[${new Date().toLocaleTimeString()}] Switched to tab matching URL "${resolvedParams.tabUrl}"`);
+              } else {
+                throw new Error(`Tab with URL matching "${resolvedParams.tabUrl}" not found.`);
+              }
+              break;
+            }
+
+            case 'close_current_tab': {
+              if (page && !page.isClosed()) {
+                await page.close();
+                const remaining = browserContext.pages();
+                if (remaining.length > 0) page = remaining[0];
+              }
+              logs.push(`[${new Date().toLocaleTimeString()}] Closed current tab and focused remaining window`);
+              break;
+            }
+
+            case 'switch_to_alert':
+            case 'accept_alert': {
+              page.once('dialog', async (dialog: any) => {
+                await dialog.accept();
+              });
+              logs.push(`[${new Date().toLocaleTimeString()}] Prepared alert dialog acceptance`);
+              break;
+            }
+
+            case 'dismiss_alert': {
+              page.once('dialog', async (dialog: any) => {
+                await dialog.dismiss();
+              });
+              logs.push(`[${new Date().toLocaleTimeString()}] Prepared alert dialog dismissal`);
+              break;
+            }
+
+            case 'get_alert_text': {
+              const varName = (resolvedParams.storeVariable || '$alertText').replace(/^\$/, '');
+              page.once('dialog', async (dialog: any) => {
+                const msg = dialog.message();
+                executionContextVars[varName] = msg;
+                await dialog.accept();
+              });
+              logs.push(`[${new Date().toLocaleTimeString()}] Prepared alert text extraction into $${varName}`);
+              break;
+            }
+
+            // ================= 5. Verification NLPs ================= //
             case 'verify_element_is_displayed': {
-              const loc = this.getPlaywrightLocator(page, step.locator, resolvedDynamicValues);
+              const { locator: loc, succeededLocator } = await AutomationEngine.resolveElementWithFallback(page, step, elements, resolvedDynamicValues, waitTimeMs, logs);
+              succeededLocatorMeta = succeededLocator;
               await loc.waitFor({ state: 'visible', timeout: waitTimeMs });
               logs.push(`[${new Date().toLocaleTimeString()}] Verified element "${step.elementName}" is visible`);
               break;
             }
 
             case 'verify_element_is_not_displayed': {
-              const loc = this.getPlaywrightLocator(page, step.locator, resolvedDynamicValues);
+              const { locator: loc, succeededLocator } = await AutomationEngine.resolveElementWithFallback(page, step, elements, resolvedDynamicValues, waitTimeMs, logs);
+              succeededLocatorMeta = succeededLocator;
               await loc.waitFor({ state: 'hidden', timeout: waitTimeMs });
               logs.push(`[${new Date().toLocaleTimeString()}] Verified element "${step.elementName}" is hidden`);
               break;
             }
 
+            case 'verify_element_is_present': {
+              const { locator: loc, succeededLocator } = await AutomationEngine.resolveElementWithFallback(page, step, elements, resolvedDynamicValues, waitTimeMs, logs);
+              succeededLocatorMeta = succeededLocator;
+              await loc.waitFor({ state: 'attached', timeout: waitTimeMs });
+              logs.push(`[${new Date().toLocaleTimeString()}] Verified element "${step.elementName}" is present in DOM`);
+              break;
+            }
+
+            case 'verify_element_is_not_present': {
+              const { locator: loc, succeededLocator } = await AutomationEngine.resolveElementWithFallback(page, step, elements, resolvedDynamicValues, waitTimeMs, logs);
+              succeededLocatorMeta = succeededLocator;
+              await loc.waitFor({ state: 'detached', timeout: waitTimeMs });
+              logs.push(`[${new Date().toLocaleTimeString()}] Verified element "${step.elementName}" is not present in DOM`);
+              break;
+            }
+
+            case 'verify_element_is_enabled': {
+              const { locator: loc, succeededLocator } = await AutomationEngine.resolveElementWithFallback(page, step, elements, resolvedDynamicValues, waitTimeMs, logs);
+              succeededLocatorMeta = succeededLocator;
+              const isEnabled = await loc.isEnabled({ timeout: waitTimeMs });
+              if (!isEnabled) throw new Error(`Element "${step.elementName}" is disabled when expected to be enabled`);
+              logs.push(`[${new Date().toLocaleTimeString()}] Verified element "${step.elementName}" is enabled`);
+              break;
+            }
+
+            case 'verify_element_is_disabled': {
+              const { locator: loc, succeededLocator } = await AutomationEngine.resolveElementWithFallback(page, step, elements, resolvedDynamicValues, waitTimeMs, logs);
+              succeededLocatorMeta = succeededLocator;
+              const isDis = await loc.isDisabled({ timeout: waitTimeMs });
+              if (!isDis) throw new Error(`Element "${step.elementName}" is enabled when expected to be disabled`);
+              logs.push(`[${new Date().toLocaleTimeString()}] Verified element "${step.elementName}" is disabled`);
+              break;
+            }
+
             case 'verify_text': {
-              const loc = this.getPlaywrightLocator(page, step.locator, resolvedDynamicValues);
-              const actual = await loc.innerText();
-              const expected = resolvedParams.expectedText || '';
-              if (!actual.toLowerCase().includes(expected.toLowerCase())) {
-                throw new Error(`Expected text "${expected}" was not found in element. Actual text: "${actual}"`);
+              let actual = '';
+              if (step.elementId || step.locator) {
+                const { locator: loc, succeededLocator } = await AutomationEngine.resolveElementWithFallback(page, step, elements, resolvedDynamicValues, waitTimeMs, logs);
+                succeededLocatorMeta = succeededLocator;
+                actual = await loc.innerText({ timeout: waitTimeMs });
+              } else {
+                actual = await page.innerText('body');
               }
-              logs.push(`[${new Date().toLocaleTimeString()}] Verified text "${expected}" matched in element`);
+              const expected = String(resolvedParams.expectedText || '');
+              const mode = resolvedParams.comparisonType || (resolvedParams.exactMatch ? 'Equals' : 'Contains');
+              let matched = false;
+              if (mode === 'Equals') matched = actual.trim() === expected.trim();
+              else if (mode === 'StartsWith') matched = actual.trim().startsWith(expected.trim());
+              else if (mode === 'EndsWith') matched = actual.trim().endsWith(expected.trim());
+              else matched = actual.toLowerCase().includes(expected.toLowerCase());
+
+              if (!matched) {
+                throw new Error(`Expected text "${expected}" [Mode: ${mode}] was not found in element. Actual text: "${actual.slice(0, 100)}"`);
+              }
+              logs.push(`[${new Date().toLocaleTimeString()}] Verified text "${expected}" matched in ${step.elementName || 'page'}`);
+              break;
+            }
+
+            case 'verify_attribute': {
+              const { locator: loc, succeededLocator } = await AutomationEngine.resolveElementWithFallback(page, step, elements, resolvedDynamicValues, waitTimeMs, logs);
+              succeededLocatorMeta = succeededLocator;
+              const attrName = resolvedParams.attributeName;
+              const expectedVal = resolvedParams.expectedValue;
+              const actualVal = await loc.getAttribute(attrName, { timeout: waitTimeMs });
+              if (actualVal !== expectedVal && !(actualVal && actualVal.includes(expectedVal))) {
+                throw new Error(`Attribute "${attrName}" mismatch. Expected: "${expectedVal}", actual: "${actualVal}"`);
+              }
+              logs.push(`[${new Date().toLocaleTimeString()}] Verified attribute "${attrName}" = "${expectedVal}"`);
               break;
             }
 
@@ -790,7 +1254,8 @@ export class AutomationEngine {
               break;
             }
 
-            case 'verify_current_url': {
+            case 'verify_current_url':
+            case 'verify_url': {
               const currentUrl = page.url();
               const expected = resolvedParams.expectedUrl || '';
               if (!currentUrl.toLowerCase().includes(expected.toLowerCase())) {
@@ -800,23 +1265,97 @@ export class AutomationEngine {
               break;
             }
 
+            case 'verify_dropdown_value': {
+              const { locator: loc, succeededLocator } = await AutomationEngine.resolveElementWithFallback(page, step, elements, resolvedDynamicValues, waitTimeMs, logs);
+              succeededLocatorMeta = succeededLocator;
+              const val = await loc.inputValue({ timeout: waitTimeMs });
+              const expected = resolvedParams.expectedValue || '';
+              if (val !== expected) {
+                throw new Error(`Dropdown value "${val}" did not match expected "${expected}"`);
+              }
+              logs.push(`[${new Date().toLocaleTimeString()}] Verified dropdown value "${val}" in "${step.elementName}"`);
+              break;
+            }
+
+            case 'verify_checkbox_is_selected': {
+              const { locator: loc, succeededLocator } = await AutomationEngine.resolveElementWithFallback(page, step, elements, resolvedDynamicValues, waitTimeMs, logs);
+              succeededLocatorMeta = succeededLocator;
+              const isChecked = await loc.isChecked({ timeout: waitTimeMs });
+              if (!isChecked) throw new Error(`Checkbox "${step.elementName}" is not selected`);
+              logs.push(`[${new Date().toLocaleTimeString()}] Verified checkbox "${step.elementName}" is selected`);
+              break;
+            }
+
+            // ================= 6. Wait NLPs (Uses Global Wait Settings) ================= //
+            case 'wait_for_element_present':
+            case 'wait_for_element': {
+              const { locator: loc, succeededLocator } = await AutomationEngine.resolveElementWithFallback(page, step, elements, resolvedDynamicValues, waitTimeMs, logs);
+              succeededLocatorMeta = succeededLocator;
+              await loc.waitFor({ state: 'attached', timeout: waitTimeMs });
+              logs.push(`[${new Date().toLocaleTimeString()}] Element "${step.elementName}" is attached to DOM (Global Wait: ${waitTimeMs}ms)`);
+              break;
+            }
+
+            case 'wait_for_element_to_be_visible':
+            case 'wait_for_element_visible': {
+              const { locator: loc, succeededLocator } = await AutomationEngine.resolveElementWithFallback(page, step, elements, resolvedDynamicValues, waitTimeMs, logs);
+              succeededLocatorMeta = succeededLocator;
+              await loc.waitFor({ state: 'visible', timeout: waitTimeMs });
+              logs.push(`[${new Date().toLocaleTimeString()}] Element "${step.elementName}" is visible (Global Wait: ${waitTimeMs}ms)`);
+              break;
+            }
+
+            case 'wait_for_element_clickable': {
+              const { locator: loc, succeededLocator } = await AutomationEngine.resolveElementWithFallback(page, step, elements, resolvedDynamicValues, waitTimeMs, logs);
+              succeededLocatorMeta = succeededLocator;
+              await loc.waitFor({ state: 'visible', timeout: waitTimeMs });
+              await loc.isEnabled({ timeout: waitTimeMs });
+              logs.push(`[${new Date().toLocaleTimeString()}] Element "${step.elementName}" is clickable (Global Wait: ${waitTimeMs}ms)`);
+              break;
+            }
+
+            case 'wait_for_element_to_be_hidden':
+            case 'wait_for_element_hidden': {
+              const { locator: loc, succeededLocator } = await AutomationEngine.resolveElementWithFallback(page, step, elements, resolvedDynamicValues, waitTimeMs, logs);
+              succeededLocatorMeta = succeededLocator;
+              await loc.waitFor({ state: 'hidden', timeout: waitTimeMs });
+              logs.push(`[${new Date().toLocaleTimeString()}] Element "${step.elementName}" is hidden/detached (Global Wait: ${waitTimeMs}ms)`);
+              break;
+            }
+
+            case 'wait_for_page_load':
+            case 'wait_for_page_to_load':
+            case 'wait_for_navigation': {
+              await page.waitForLoadState('load', { timeout: waitTimeMs });
+              logs.push(`[${new Date().toLocaleTimeString()}] Page load completed (Global Wait: ${waitTimeMs}ms)`);
+              break;
+            }
+
+            case 'wait_for_network_idle': {
+              await page.waitForLoadState('networkidle', { timeout: waitTimeMs }).catch(() => {});
+              logs.push(`[${new Date().toLocaleTimeString()}] Network requests settled to idle (Global Wait: ${waitTimeMs}ms)`);
+              break;
+            }
+
             case 'static_wait': {
-              const dur = Number(resolvedParams.durationMs) || 1000;
-              logs.push(`[${new Date().toLocaleTimeString()}] Waiting for ${dur}ms`);
-              await page.waitForTimeout(dur);
+              await page.waitForTimeout(delayMs > 0 ? delayMs : 1000);
+              logs.push(`[${new Date().toLocaleTimeString()}] Paused execution for step delay interval`);
               break;
             }
 
+            case 'wait_for_text': {
+              const expected = resolvedParams.expectedText || '';
+              await page.getByText(expected).first().waitFor({ state: 'visible', timeout: waitTimeMs });
+              logs.push(`[${new Date().toLocaleTimeString()}] Text "${expected}" appeared on page (Global Wait: ${waitTimeMs}ms)`);
+              break;
+            }
+
+            // ================= 7. Scroll NLPs ================= //
             case 'scroll_to_element': {
-              const loc = this.getPlaywrightLocator(page, step.locator, resolvedDynamicValues);
-              await loc.scrollIntoViewIfNeeded();
+              const { locator: loc, succeededLocator } = await AutomationEngine.resolveElementWithFallback(page, step, elements, resolvedDynamicValues, waitTimeMs, logs);
+              succeededLocatorMeta = succeededLocator;
+              await loc.scrollIntoViewIfNeeded({ timeout: waitTimeMs });
               logs.push(`[${new Date().toLocaleTimeString()}] Scrolled element "${step.elementName}" into view`);
-              break;
-            }
-
-            case 'scroll_to_bottom': {
-              await page.evaluate('window.scrollTo(0, document.body.scrollHeight)');
-              logs.push(`[${new Date().toLocaleTimeString()}] Scrolled to bottom of page`);
               break;
             }
 
@@ -826,6 +1365,35 @@ export class AutomationEngine {
               break;
             }
 
+            case 'scroll_to_bottom': {
+              await page.evaluate('window.scrollTo(0, document.body.scrollHeight || 10000)');
+              logs.push(`[${new Date().toLocaleTimeString()}] Scrolled to bottom of page`);
+              break;
+            }
+
+            case 'scroll_up': {
+              const px = Number(resolvedParams.pixels) || 400;
+              await page.evaluate(`window.scrollBy(0, -${px})`);
+              logs.push(`[${new Date().toLocaleTimeString()}] Scrolled up by ${px} pixels`);
+              break;
+            }
+
+            case 'scroll_down': {
+              const px = Number(resolvedParams.pixels) || 400;
+              await page.evaluate(`window.scrollBy(0, ${px})`);
+              logs.push(`[${new Date().toLocaleTimeString()}] Scrolled down by ${px} pixels`);
+              break;
+            }
+
+            case 'scroll_by_pixels': {
+              const x = Number(resolvedParams.xPixels) || 0;
+              const y = Number(resolvedParams.yPixels) || 400;
+              await page.evaluate(`window.scrollBy(${x}, ${y})`);
+              logs.push(`[${new Date().toLocaleTimeString()}] Scrolled by pixels (${x}, ${y})`);
+              break;
+            }
+
+            // ================= 8. Excel NLPs ================= //
             case 'get_data_from_excel': {
               const fileName = resolvedParams.fileName;
               const sheetName = resolvedParams.sheetName;
@@ -843,9 +1411,16 @@ export class AutomationEngine {
                 extractedData = { TC_ID: uniqueData, ProductName: 'Watch', VerificationText: 'Watches Few' };
               }
 
-              Object.assign(executionContextVars, extractedData);
+              // Store in $testData map and flatten $testData.Field & $Field
+              const targetVar = (resolvedParams.targetVariable || '$testData').replace(/^\$/, '');
+              executionContextVars[targetVar] = extractedData;
+              for (const [k, v] of Object.entries(extractedData)) {
+                executionContextVars[`${targetVar}.${k}`] = v;
+                executionContextVars[k] = v;
+              }
+
               excelRef = { fileName, sheetName, uniqueData, extractedData };
-              logs.push(`[${new Date().toLocaleTimeString()}] Retrieved Excel row [${uniqueData}]: ${JSON.stringify(extractedData)}`);
+              logs.push(`[${new Date().toLocaleTimeString()}] Retrieved Excel row [${uniqueData}]: ${JSON.stringify(extractedData)} (stored in $${targetVar} and flattened keys)`);
               break;
             }
 
@@ -889,7 +1464,7 @@ export class AutomationEngine {
             await page.waitForTimeout(delayMs);
           }
         } else {
-          // Fallback simulation when no browser window available
+          // Fallback simulation when no browser available
           if (step.nlpId === 'get_data_from_excel') {
             const fileName = resolvedParams.fileName;
             const sheetName = resolvedParams.sheetName;
@@ -901,7 +1476,12 @@ export class AutomationEngine {
             } else {
               extractedData = { TC_ID: uniqueData, ProductName: 'Watch', VerificationText: 'Watches Few' };
             }
-            Object.assign(executionContextVars, extractedData);
+            const targetVar = (resolvedParams.targetVariable || '$testData').replace(/^\$/, '');
+            executionContextVars[targetVar] = extractedData;
+            for (const [k, v] of Object.entries(extractedData)) {
+              executionContextVars[`${targetVar}.${k}`] = v;
+              executionContextVars[k] = v;
+            }
             excelRef = { fileName, sheetName, uniqueData, extractedData };
           }
           logs.push(`[${new Date().toLocaleTimeString()}] Action executed successfully in Playwright Engine.`);
@@ -918,97 +1498,82 @@ export class AutomationEngine {
       }
 
       // Capture screenshot
-      let screenshot: string | undefined = undefined;
-      const shouldCapture = settings.screenshotOption === 'every-step' || (stepStatus === 'Failed' && settings.screenshotOption === 'failed-only') || true;
-      if (shouldCapture) {
-        if (page && !page.isClosed()) {
-          try {
-            const shotBuffer = await page.screenshot({ fullPage: false, type: 'png' });
-            screenshot = 'data:image/png;base64,' + shotBuffer.toString('base64');
-          } catch (shotErr) {
-            screenshot = this.generateScreenshotSvg(
-              step.nlpName,
-              stepStatus,
-              step.elementName ? `${step.elementName} (${resolvedLocatorValue || 'Mapped'})` : undefined,
-              resolvedParams.url,
-              stepError?.message
-            );
-          }
-        } else {
-          screenshot = this.generateScreenshotSvg(
-            step.nlpName,
-            stepStatus,
-            step.elementName ? `${step.elementName} (${resolvedLocatorValue || 'Mapped'})` : undefined,
-            resolvedParams.url,
-            stepError?.message
-          );
+      let screenshotBase64: string | undefined = undefined;
+      const shouldScreenshot =
+        settings.captureScreenshots === 'always' ||
+        (settings.captureScreenshots === 'on_failure' && stepStatus === 'Failed') ||
+        (settings.captureScreenshots !== 'never' && stepStatus === 'Failed');
+
+      if (shouldScreenshot && page && !page.isClosed()) {
+        try {
+          const buffer = await page.screenshot({ type: 'jpeg', quality: 70 });
+          screenshotBase64 = buffer.toString('base64');
+        } catch {
+          // Screenshot failed (e.g. dialog open or page closed)
         }
       }
 
       const stepEnd = Date.now();
-      const stepDuration = Number(((stepEnd - stepStart) / 1000).toFixed(2)) || 0.1;
-
-      executedSteps.push({
+      const stepRecord = {
+        stepId: step.id,
         stepNumber: step.stepNumber,
+        nlpId: step.nlpId,
         nlpName: step.nlpName,
         nlpCategory: step.nlpCategory,
-        description: step.description,
+        elementName: step.elementName,
+        locator: step.locator,
+        succeededLocator: succeededLocatorMeta,
+        parameters: resolvedParams,
+        variablesUsed: stepVarsUsed,
         status: stepStatus,
         startedAt: stepStartDate,
         completedAt: new Date(stepEnd).toISOString(),
-        durationSeconds: stepDuration,
-        element: step.elementId ? {
-          id: step.elementId,
-          name: step.elementName || 'UI Element',
-          page: step.pageName || 'Repository Page',
-          locatorType: step.locator?.type || 'ID',
-          locatorValue: resolvedLocatorValue || step.locator?.value || ''
-        } : undefined,
-        variablesUsed: stepVarsUsed.length > 0 ? stepVarsUsed : undefined,
-        inputParameters: resolvedParams,
-        excelReference: excelRef,
+        durationMs: stepEnd - stepStart,
         logs,
-        screenshot,
-        error: stepError
-      });
+        error: stepError,
+        screenshotBase64,
+        excelRef
+      };
+
+      executedSteps.push(stepRecord);
 
       if (stepStatus === 'Failed') {
         failureDetails = {
-          reason: stepError?.message || 'Step failure',
-          exceptionName: stepError?.exceptionName || 'Error',
-          errorMessage: stepError?.message || 'Unknown failure',
-          failedStepNumber: step.stepNumber,
-          failedLocator: resolvedLocatorValue,
-          screenshot,
-          logs
+          stepNumber: step.stepNumber,
+          stepName: step.nlpName,
+          error: stepError?.message || 'Step failed'
         };
-        break; // Stop on first failure
+        break; // Stop execution on failure
       }
     }
 
-    // Teardown browser
-    if (browser) {
+    // Teardown browser if not keep open
+    if (!settings.keepBrowserOpen && browser) {
       try {
         await browser.close();
-      } catch (closeErr) {
-        console.warn('Error closing browser:', closeErr);
-      }
+      } catch {}
+      browser = null;
+      browserContext = null;
+      page = null;
     }
 
     const scriptEnd = Date.now();
-    const durationSeconds = Number(((scriptEnd - scriptStart) / 1000).toFixed(2)) || 0.5;
+    const durationMs = scriptEnd - scriptStart;
 
     return {
       scriptId: script.id,
       scriptName: script.name,
-      moduleName: moduleName || 'General Module',
+      moduleName: moduleName || 'General',
       status: scriptStatus,
       startedAt,
       completedAt: new Date(scriptEnd).toISOString(),
-      durationSeconds,
+      durationMs,
+      totalSteps: script.steps?.filter((s: any) => s.isEnabled)?.length || 0,
+      passedSteps: executedSteps.filter(s => s.status === 'Passed').length,
+      failedSteps: executedSteps.filter(s => s.status === 'Failed').length,
       steps: executedSteps,
       failureDetails,
-      generatedPlaywrightCode: generatedCode
+      generatedCode
     };
   }
 
@@ -1101,20 +1666,34 @@ export class AutomationEngine {
 
   public static resolveVariables(
     text: string,
-    localVars: any[],
-    globalVars: any[]
-  ): { resolved: string; variablesUsed: Array<{ name: string; type: 'Local' | 'Global'; resolvedValue: string; isMasked?: boolean }> } {
+    localVars: any[] = [],
+    globalVars: any[] = [],
+    executionContextVars: Record<string, any> = {}
+  ): { resolved: string; variablesUsed: Array<{ name: string; type: 'Local' | 'Global' | 'Context'; resolvedValue: string; isMasked?: boolean }> } {
     if (!text || typeof text !== 'string') {
       return { resolved: text, variablesUsed: [] };
     }
 
-    const variablesUsed: Array<{ name: string; type: 'Local' | 'Global'; resolvedValue: string; isMasked?: boolean }> = [];
+    const variablesUsed: Array<{ name: string; type: 'Local' | 'Global' | 'Context'; resolvedValue: string; isMasked?: boolean }> = [];
     let resolved = text;
 
-    // Matches $variableName or ${variableName}
-    const varRegex = /\$\{?([a-zA-Z0-9_]+)\}?/g;
+    // Matches $variableName, ${variableName}, $testData.ProductName, ${testData.ProductName}
+    const varRegex = /\$\{?([a-zA-Z0-9_.]+)\}?/g;
     resolved = resolved.replace(varRegex, (match, varName) => {
-      // Check local first
+      // 1. Check runtime execution context first (Excel extraction, dynamic vars)
+      if (executionContextVars && (varName in executionContextVars || varName.toLowerCase() in executionContextVars)) {
+        const val = executionContextVars[varName] !== undefined ? executionContextVars[varName] : executionContextVars[varName.toLowerCase()];
+        const strVal = typeof val === 'object' ? JSON.stringify(val) : String(val ?? '');
+        variablesUsed.push({
+          name: varName,
+          type: 'Context',
+          resolvedValue: strVal,
+          isMasked: false
+        });
+        return strVal;
+      }
+
+      // 2. Check local first
       const localVar = (localVars || []).find(v => v.name === varName || v.name.toLowerCase() === varName.toLowerCase());
       if (localVar) {
         const isMasked = localVar.dataType === 'Encrypted' || /password|secret|token|key/i.test(localVar.name);
@@ -1127,7 +1706,7 @@ export class AutomationEngine {
         return localVar.value;
       }
 
-      // Check global
+      // 3. Check global
       const globalVar = (globalVars || []).find(v => v.name === varName || v.name.toLowerCase() === varName.toLowerCase());
       if (globalVar) {
         const isMasked = globalVar.dataType === 'Encrypted' || /password|secret|token|key/i.test(globalVar.name);
@@ -1187,7 +1766,6 @@ export class AutomationEngine {
       throw new Error(`Worksheet "${sheetName}" is empty.`);
     }
 
-    // Search for uniqueData anywhere in the row (e.g. TC001)
     const matchingRow = rows.find(row => {
       return Object.values(row).some(cellVal => String(cellVal).trim() === uniqueData.trim());
     });
@@ -1228,7 +1806,6 @@ export class AutomationEngine {
     let targetRow = -1;
     let targetCol = -1;
 
-    // Find row with uniqueData
     for (let R = range.s.r; R <= range.e.r; ++R) {
       for (let C = range.s.c; C <= range.e.c; ++C) {
         const cell = targetSheet[XLSX.utils.encode_cell({ r: R, c: C })];
@@ -1244,7 +1821,6 @@ export class AutomationEngine {
       throw new Error(`Unique data identifier "${uniqueData}" not found in worksheet "${sheetName}". Cannot write data.`);
     }
 
-    // Find column matching header (checking row 0 or header row)
     for (let C = range.s.c; C <= range.e.c; ++C) {
       const headerCell = targetSheet[XLSX.utils.encode_cell({ r: range.s.r, c: C })];
       if (headerCell && String(headerCell.v).trim().toLowerCase() === header.trim().toLowerCase()) {
@@ -1260,7 +1836,6 @@ export class AutomationEngine {
       targetSheet['!ref'] = XLSX.utils.encode_range(range);
     }
 
-    // Write data at intersection
     targetSheet[XLSX.utils.encode_cell({ r: targetRow, c: targetCol })] = {
       t: 's',
       v: writeBackData

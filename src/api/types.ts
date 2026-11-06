@@ -92,6 +92,7 @@ export interface Locator {
   value: string;
   valueType: ValueType;
   isPrimary?: boolean;
+  priority?: number;
 }
 
 export interface RepositoryElement {

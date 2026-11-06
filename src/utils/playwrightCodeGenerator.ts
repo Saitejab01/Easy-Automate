@@ -59,13 +59,13 @@ export function generatePlaywrightCode(
       const locatorCode = getPlaywrightLocatorCode(step.locator, codeDynValues);
 
       switch (step.nlpId) {
+        // --- Browser NLPs ---
         case 'open_browser': {
           lines.push(`  // Browser launched and initialized`);
           break;
         }
-        case 'navigate_to_url': {
-          const url = resolvedParams.url || '';
-          lines.push(`  await page.goto('${url}', { waitUntil: 'domcontentloaded' });`);
+        case 'close_browser': {
+          lines.push(`  await browser.close();`);
           break;
         }
         case 'maximize_browser': {
@@ -83,6 +83,15 @@ export function generatePlaywrightCode(
           lines.push(`  await page.evaluate(() => { try { document.documentElement.style.zoom = '1'; } catch {} });`);
           break;
         }
+        case 'minimize_browser': {
+          lines.push(`  try {`);
+          lines.push(`    const session = await context.newCDPSession(page);`);
+          lines.push(`    const { windowId } = await session.send('Browser.getWindowForTarget');`);
+          lines.push(`    await session.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'minimized' } });`);
+          lines.push(`  } catch {}`);
+          break;
+        }
+        case 'refresh_browser':
         case 'refresh_page': {
           lines.push(`  await page.reload();`);
           break;
@@ -95,20 +104,36 @@ export function generatePlaywrightCode(
           lines.push(`  await page.goForward();`);
           break;
         }
-        case 'clear_browser_cache': {
-          lines.push(`  await context.clearCookies();`);
+        case 'navigate_to_url': {
+          const url = resolvedParams.url || '';
+          lines.push(`  await page.goto('${url}', { waitUntil: 'domcontentloaded' });`);
           break;
         }
-        case 'accept_alert': {
-          lines.push(`  page.once('dialog', dialog => dialog.accept());`);
+        case 'get_current_url': {
+          const varName = (resolvedParams.storeVariable || '$currentUrl').replace(/^\$/, '');
+          lines.push(`  testContext['${varName}'] = page.url();`);
           break;
         }
-        case 'dismiss_alert': {
-          lines.push(`  page.once('dialog', dialog => dialog.dismiss());`);
+        case 'get_page_title': {
+          const varName = (resolvedParams.storeVariable || '$pageTitle').replace(/^\$/, '');
+          lines.push(`  testContext['${varName}'] = await page.title();`);
           break;
         }
+
+        // --- Browser Action NLPs ---
         case 'click_element': {
-          lines.push(`  await ${locatorCode}.click();`);
+          const count = Number(resolvedParams.clickCount) || 1;
+          lines.push(`  await ${locatorCode}.click({ clickCount: ${count} });`);
+          break;
+        }
+        case 'double_click_element':
+        case 'double_click': {
+          lines.push(`  await ${locatorCode}.dblclick();`);
+          break;
+        }
+        case 'right_click_element':
+        case 'right_click': {
+          lines.push(`  await ${locatorCode}.click({ button: 'right' });`);
           break;
         }
         case 'enter_text': {
@@ -128,46 +153,125 @@ export function generatePlaywrightCode(
           lines.push(`  await ${locatorCode}.hover();`);
           break;
         }
-        case 'double_click': {
-          lines.push(`  await ${locatorCode}.dblclick();`);
+        case 'drag_and_drop': {
+          if (resolvedParams.targetElementId) {
+            lines.push(`  await ${locatorCode}.dragTo(page.locator('#${resolvedParams.targetElementId}'));`);
+          } else {
+            lines.push(`  await ${locatorCode}.hover();`);
+            lines.push(`  await page.mouse.down();`);
+            lines.push(`  await page.mouse.move(${Number(resolvedParams.targetX) || 100}, ${Number(resolvedParams.targetY) || 100});`);
+            lines.push(`  await page.mouse.up();`);
+          }
           break;
         }
-        case 'right_click': {
-          lines.push(`  await ${locatorCode}.click({ button: 'right' });`);
-          break;
-        }
+        case 'select_dropdown_by_text':
         case 'select_option_by_text': {
-          const text = (resolvedParams.optionText || resolvedParams.text || '').replace(/'/g, "\\'");
+          const text = (resolvedParams.text || resolvedParams.optionText || '').replace(/'/g, "\\'");
           lines.push(`  await ${locatorCode}.selectOption({ label: '${text}' });`);
           break;
         }
+        case 'select_dropdown_by_value':
         case 'select_option_by_value': {
-          const val = (resolvedParams.optionValue || resolvedParams.value || '').replace(/'/g, "\\'");
+          const val = (resolvedParams.value || resolvedParams.optionValue || '').replace(/'/g, "\\'");
           lines.push(`  await ${locatorCode}.selectOption({ value: '${val}' });`);
           break;
         }
-        case 'select_option_by_index': {
-          lines.push(`  await ${locatorCode}.selectOption({ index: ${resolvedParams.index || 0} });`);
+        case 'select_multiple_options': {
+          const opts = String(resolvedParams.options || '').split(',').map(s => `'${s.trim().replace(/'/g, "\\'")}'`).join(', ');
+          lines.push(`  await ${locatorCode}.selectOption([${opts}]);`);
           break;
         }
+        case 'select_checkbox':
         case 'check_checkbox': {
           lines.push(`  await ${locatorCode}.check();`);
           break;
         }
+        case 'deselect_checkbox':
         case 'uncheck_checkbox': {
           lines.push(`  await ${locatorCode}.uncheck();`);
           break;
         }
+        case 'press_keyboard_key':
         case 'press_key': {
           lines.push(`  await page.keyboard.press('${resolvedParams.key || 'Enter'}');`);
           break;
         }
+        case 'upload_file': {
+          lines.push(`  await ${locatorCode}.setInputFiles('${resolvedParams.filePath || ''}');`);
+          break;
+        }
+        case 'download_file': {
+          const varName = (resolvedParams.storeVariable || '$downloadedPath').replace(/^\$/, '');
+          lines.push(`  const [download] = await Promise.all([`);
+          lines.push(`    page.waitForEvent('download'),`);
+          lines.push(`    ${locatorCode}.click()`);
+          lines.push(`  ]);`);
+          lines.push(`  testContext['${varName}'] = await download.path();`);
+          break;
+        }
+
+        // --- Switching NLPs ---
+        case 'switch_to_frame': {
+          lines.push(`  const frame = page.frameLocator('${resolvedParams.frameLocator || 'iframe'}');`);
+          break;
+        }
+        case 'switch_to_default_content':
+        case 'switch_to_parent_frame': {
+          lines.push(`  // Switched back to top-level content`);
+          break;
+        }
+        case 'switch_to_new_tab': {
+          lines.push(`  const pages = context.pages();`);
+          lines.push(`  const newPage = pages[pages.length - 1];`);
+          lines.push(`  await newPage.bringToFront();`);
+          break;
+        }
+        case 'switch_to_tab_by_title': {
+          lines.push(`  for (const p of context.pages()) {`);
+          lines.push(`    if ((await p.title()).includes('${resolvedParams.tabTitle || ''}')) { await p.bringToFront(); break; }`);
+          lines.push(`  }`);
+          break;
+        }
+        case 'switch_to_tab_by_url': {
+          lines.push(`  for (const p of context.pages()) {`);
+          lines.push(`    if (p.url().includes('${resolvedParams.tabUrl || ''}')) { await p.bringToFront(); break; }`);
+          lines.push(`  }`);
+          break;
+        }
+        case 'close_current_tab': {
+          lines.push(`  await page.close();`);
+          break;
+        }
+        case 'switch_to_alert':
+        case 'accept_alert': {
+          lines.push(`  page.once('dialog', dialog => dialog.accept());`);
+          break;
+        }
+        case 'dismiss_alert': {
+          lines.push(`  page.once('dialog', dialog => dialog.dismiss());`);
+          break;
+        }
+        case 'get_alert_text': {
+          const varName = (resolvedParams.storeVariable || '$alertText').replace(/^\$/, '');
+          lines.push(`  page.once('dialog', dialog => { testContext['${varName}'] = dialog.message(); dialog.accept(); });`);
+          break;
+        }
+
+        // --- Verification NLPs ---
         case 'verify_element_is_displayed': {
-          lines.push(`  await ${locatorCode}.waitFor({ state: 'visible', timeout: 5000 });`);
+          lines.push(`  await expect(${locatorCode}).toBeVisible();`);
           break;
         }
         case 'verify_element_is_not_displayed': {
-          lines.push(`  await ${locatorCode}.waitFor({ state: 'hidden', timeout: 5000 });`);
+          lines.push(`  await expect(${locatorCode}).toBeHidden();`);
+          break;
+        }
+        case 'verify_element_is_present': {
+          lines.push(`  await ${locatorCode}.waitFor({ state: 'attached' });`);
+          break;
+        }
+        case 'verify_element_is_not_present': {
+          lines.push(`  await ${locatorCode}.waitFor({ state: 'detached' });`);
           break;
         }
         case 'verify_element_is_enabled': {
@@ -180,7 +284,18 @@ export function generatePlaywrightCode(
         }
         case 'verify_text': {
           const expText = (resolvedParams.expectedText || '').replace(/'/g, "\\'");
-          lines.push(`  await expect(${locatorCode}).toContainText('${expText}');`);
+          const mode = resolvedParams.comparisonType || 'Contains';
+          if (mode === 'Equals') {
+            lines.push(`  await expect(${locatorCode}).toHaveText('${expText}');`);
+          } else {
+            lines.push(`  await expect(${locatorCode}).toContainText('${expText}');`);
+          }
+          break;
+        }
+        case 'verify_attribute': {
+          const attr = resolvedParams.attributeName || 'class';
+          const val = (resolvedParams.expectedValue || '').replace(/'/g, "\\'");
+          lines.push(`  await expect(${locatorCode}).toHaveAttribute('${attr}', '${val}');`);
           break;
         }
         case 'verify_page_title': {
@@ -188,32 +303,42 @@ export function generatePlaywrightCode(
           lines.push(`  await expect(page).toHaveTitle(new RegExp('${title}', 'i'));`);
           break;
         }
-        case 'verify_current_url': {
+        case 'verify_current_url':
+        case 'verify_url': {
           const expUrl = (resolvedParams.expectedUrl || '').replace(/'/g, "\\'");
           lines.push(`  await expect(page).toHaveURL(new RegExp('${expUrl}', 'i'));`);
           break;
         }
-        case 'verify_checkbox_is_checked': {
-          lines.push(`  await expect(${locatorCode}).toBeChecked();`);
+        case 'verify_dropdown_value': {
+          const expVal = (resolvedParams.expectedValue || '').replace(/'/g, "\\'");
+          lines.push(`  await expect(${locatorCode}).toHaveValue('${expVal}');`);
           break;
         }
-        case 'verify_checkbox_is_unchecked': {
-          lines.push(`  await expect(${locatorCode}).not.toBeChecked();`);
+
+        // --- Wait NLPs (Uses Global Wait configuration) ---
+        case 'wait_for_element_present':
+        case 'wait_for_element': {
+          lines.push(`  await ${locatorCode}.waitFor({ state: 'attached' });`);
           break;
         }
-        case 'static_wait': {
-          lines.push(`  await page.waitForTimeout(${Number(resolvedParams.durationMs) || 1000});`);
-          break;
-        }
+        case 'wait_for_element_to_be_visible':
         case 'wait_for_element_visible': {
-          lines.push(`  await ${locatorCode}.waitFor({ state: 'visible', timeout: ${Number(resolvedParams.waitTimeMs) || 5000} });`);
+          lines.push(`  await ${locatorCode}.waitFor({ state: 'visible' });`);
           break;
         }
+        case 'wait_for_element_clickable': {
+          lines.push(`  await ${locatorCode}.waitFor({ state: 'visible' });`);
+          lines.push(`  await expect(${locatorCode}).toBeEnabled();`);
+          break;
+        }
+        case 'wait_for_element_to_be_hidden':
         case 'wait_for_element_hidden': {
-          lines.push(`  await ${locatorCode}.waitFor({ state: 'hidden', timeout: ${Number(resolvedParams.waitTimeMs) || 5000} });`);
+          lines.push(`  await ${locatorCode}.waitFor({ state: 'hidden' });`);
           break;
         }
-        case 'wait_for_page_to_load': {
+        case 'wait_for_page_load':
+        case 'wait_for_page_to_load':
+        case 'wait_for_navigation': {
           lines.push(`  await page.waitForLoadState('load');`);
           break;
         }
@@ -221,6 +346,17 @@ export function generatePlaywrightCode(
           lines.push(`  await page.waitForLoadState('networkidle');`);
           break;
         }
+        case 'static_wait': {
+          lines.push(`  await page.waitForTimeout(1000);`);
+          break;
+        }
+        case 'wait_for_text': {
+          const text = (resolvedParams.expectedText || '').replace(/'/g, "\\'");
+          lines.push(`  await page.getByText('${text}').first().waitFor({ state: 'visible' });`);
+          break;
+        }
+
+        // --- Scroll NLPs ---
         case 'scroll_to_element': {
           lines.push(`  await ${locatorCode}.scrollIntoViewIfNeeded();`);
           break;
@@ -233,13 +369,29 @@ export function generatePlaywrightCode(
           lines.push(`  await page.evaluate(() => window.scrollTo(0, 0));`);
           break;
         }
+        case 'scroll_up': {
+          lines.push(`  await page.evaluate(() => window.scrollBy(0, -${Number(resolvedParams.pixels) || 400}));`);
+          break;
+        }
+        case 'scroll_down': {
+          lines.push(`  await page.evaluate(() => window.scrollBy(0, ${Number(resolvedParams.pixels) || 400}));`);
+          break;
+        }
+        case 'scroll_by_pixels': {
+          lines.push(`  await page.evaluate(() => window.scrollBy(${Number(resolvedParams.xPixels) || 0}, ${Number(resolvedParams.yPixels) || 400}));`);
+          break;
+        }
+
+        // --- Excel NLPs ---
         case 'get_data_from_excel': {
-          lines.push(`  // Read row '${resolvedParams.uniqueData}' from file '${resolvedParams.fileName}' (${resolvedParams.sheetName})`);
-          lines.push(`  Object.assign(testContext, await readExcelRow('${resolvedParams.fileName}', '${resolvedParams.sheetName}', '${resolvedParams.uniqueData}'));`);
+          const targetVar = (resolvedParams.targetVariable || '$testData').replace(/^\$/, '');
+          lines.push(`  // Fetch row '${resolvedParams.uniqueData}' from Excel '${resolvedParams.fileName}' (${resolvedParams.sheetName})`);
+          lines.push(`  testContext['${targetVar}'] = await readExcelRow('${resolvedParams.fileName}', '${resolvedParams.sheetName}', '${resolvedParams.uniqueData}');`);
+          lines.push(`  Object.assign(testContext, testContext['${targetVar}']);`);
           break;
         }
         case 'write_data_to_excel': {
-          lines.push(`  // Write '${resolvedParams.writeBackData}' to file '${resolvedParams.fileName}' at [${resolvedParams.uniqueData}, ${resolvedParams.header}]`);
+          lines.push(`  // Write '${resolvedParams.writeBackData}' to Excel file '${resolvedParams.fileName}' at [${resolvedParams.uniqueData}, ${resolvedParams.header}]`);
           lines.push(`  await writeExcelCell('${resolvedParams.fileName}', '${resolvedParams.sheetName}', '${resolvedParams.uniqueData}', '${resolvedParams.header}', '${resolvedParams.writeBackData}');`);
           break;
         }
@@ -262,7 +414,8 @@ export function generatePlaywrightCode(
 
 function resolveVariables(text: string, localVars: any[] = [], globalVars: any[] = []): string {
   if (!text || typeof text !== 'string') return text;
-  const varRegex = /\$\{?([a-zA-Z0-9_]+)\}?/g;
+  // Support dotted variable names: $testData.ProductName, ${testData.ProductName}
+  const varRegex = /\$\{?([a-zA-Z0-9_.]+)\}?/g;
   return text.replace(varRegex, (match, varName) => {
     const localVar = (localVars || []).find(v => v.name === varName || v.name.toLowerCase() === varName.toLowerCase());
     if (localVar) return localVar.value;
@@ -319,4 +472,3 @@ function getPlaywrightLocatorCode(locator: any, dynamicValues?: Record<string, s
       return `page.locator('${escaped}')`;
   }
 }
-
