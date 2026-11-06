@@ -944,6 +944,12 @@ export const api = {
       }
       return { status: 'idle', isOpen: false, capturedCount: 0 };
     },
+    async setCapturedSequence(count: number) {
+      if (isElectron && (window as any).electronAPI?.finder?.setCapturedSequence) {
+        return (window as any).electronAPI.finder.setCapturedSequence(count);
+      }
+      return { success: true };
+    },
     onElementCaptured(callback: (elem: any) => void) {
       if (isElectron && (window as any).electronAPI?.finder?.onElementCaptured) {
         return (window as any).electronAPI.finder.onElementCaptured(callback);

@@ -57,6 +57,8 @@ export const electronAPI = {
       ipcRenderer.invoke('finder:setCaptureMode', mode),
     getStatus: () =>
       ipcRenderer.invoke('finder:getStatus'),
+    setCapturedSequence: (count: number) =>
+      ipcRenderer.invoke('finder:setCapturedSequence', count),
     onElementCaptured: (callback: (element: any) => void) => {
       const subscription = (_event: any, data: any) => callback(data);
       ipcRenderer.on('finder:elementCaptured', subscription);

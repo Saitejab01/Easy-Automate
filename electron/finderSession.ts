@@ -51,6 +51,10 @@ export class FinderSessionManager {
     this.mainWindow = win;
   }
 
+  public setCapturedSequence(seq: number) {
+    this.capturedSequence = Math.max(0, Number(seq) || 0);
+  }
+
   public getStatus() {
     return {
       status: this.status,
@@ -902,3 +906,4 @@ export class FinderSessionManager {
 }
 
 export const finderSession = new FinderSessionManager();
+

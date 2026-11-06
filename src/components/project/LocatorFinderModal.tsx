@@ -218,14 +218,23 @@ export const LocatorFinderModal: React.FC<LocatorFinderModalProps> = ({
 
     const unsubCapture = api.finder.onElementCaptured((capturedRecord: FinderCapturedElement) => {
       setCapturedElements(prev => {
-        const next = [...prev, {
+        const nextSeq = prev.length + 1;
+        const normalized: FinderCapturedElement = {
           ...capturedRecord,
+          sequence: nextSeq,
+          name: capturedRecord.name.includes('#')
+            ? capturedRecord.name.replace(/#\d+/, `#${nextSeq}`)
+            : capturedRecord.name,
           targetPageId: capturedRecord.targetPageId || defaultPageId
-        }];
+        };
+        const next = [...prev, normalized];
+        try {
+          localStorage.setItem(storageKey, JSON.stringify(next));
+        } catch {}
         return next;
       });
       setSelectedElementId(capturedRecord.id);
-      setSuccessMsg(`Captured "${capturedRecord.name}" successfully! Live browser remains open for continuous capture.`);
+      setSuccessMsg(`Captured element successfully! Live browser remains open for continuous capture.`);
       setErrorMsg(null);
     });
 
@@ -302,7 +311,12 @@ export const LocatorFinderModal: React.FC<LocatorFinderModalProps> = ({
       capturedAt: new Date().toISOString()
     };
 
-    setCapturedElements(prev => [...prev, newElement]);
+    const next = [...capturedElements, newElement];
+    setCapturedElements(next);
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(next));
+    } catch {}
+    api.finder.setCapturedSequence(next.length);
     setSelectedElementId(newElement.id);
     setSuccessMsg(`Added sample element: "${newElement.name}"`);
   };
@@ -514,11 +528,21 @@ export const LocatorFinderModal: React.FC<LocatorFinderModalProps> = ({
 
   const handleDeleteElement = (elementId: string) => {
     const next = capturedElements.filter(e => e.id !== elementId);
-    setCapturedElements(next);
+    const reindexed = next.map((el, idx) => ({
+      ...el,
+      sequence: idx + 1,
+      name: el.name.replace(/#\d+/, `#${idx + 1}`)
+    }));
+    setCapturedElements(reindexed);
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(reindexed));
+    } catch {}
+    api.finder.setCapturedSequence(reindexed.length);
+
     if (selectedElementId === elementId) {
-      setSelectedElementId(next[0]?.id || null);
+      setSelectedElementId(reindexed[0]?.id || null);
     }
-    setSuccessMsg('Element removed from capture session.');
+    setSuccessMsg('Element removed and element sequence auto-synced.');
   };
 
   const handleClearAll = () => {
@@ -526,6 +550,7 @@ export const LocatorFinderModal: React.FC<LocatorFinderModalProps> = ({
       setCapturedElements([]);
       setSelectedElementId(null);
       localStorage.removeItem(storageKey);
+      api.finder.setCapturedSequence(0);
       setSuccessMsg('Captured elements cleared.');
     }
   };
@@ -577,8 +602,20 @@ export const LocatorFinderModal: React.FC<LocatorFinderModalProps> = ({
       });
 
       if (res && res.success) {
-        updateSelectedElement({ pushed: true });
-        setSuccessMsg(`Pushed "${selectedElement.name}" to Repository successfully!`);
+        // Once pushed, remove the element from the locator capture list
+        const remaining = capturedElements.filter(e => e.id !== selectedElement.id);
+        const reindexed = remaining.map((el, idx) => ({
+          ...el,
+          sequence: idx + 1,
+          name: el.name.replace(/#\d+/, `#${idx + 1}`)
+        }));
+        setCapturedElements(reindexed);
+        try {
+          localStorage.setItem(storageKey, JSON.stringify(reindexed));
+        } catch {}
+        api.finder.setCapturedSequence(reindexed.length);
+        setSelectedElementId(reindexed[0]?.id || null);
+        setSuccessMsg(`Pushed "${selectedElement.name}" to Repository successfully and removed from Locator Finder.`);
       } else {
         setErrorMsg(res?.error || 'Failed to save element to repository');
       }
@@ -621,6 +658,7 @@ export const LocatorFinderModal: React.FC<LocatorFinderModalProps> = ({
     setIsPushingBatch(true);
     setErrorMsg(null);
     let successCount = 0;
+    const pushedIds = new Set<string>();
     const safeExisting = Array.isArray(existingElements) ? existingElements : [];
 
     try {
@@ -650,13 +688,30 @@ export const LocatorFinderModal: React.FC<LocatorFinderModalProps> = ({
 
         if (res && res.success) {
           successCount++;
+          pushedIds.add(item.id);
+        } else if (res && res.error) {
+          console.warn(`Failed to push element "${item.name}":`, res.error);
         }
       }
 
-      setCapturedElements(prev =>
-        prev.map(el => (selectedForPush[el.id] ? { ...el, pushed: true } : el))
-      );
-      setSuccessMsg(`Pushed ${successCount} element(s) to Repository successfully!`);
+      if (successCount > 0) {
+        // Once pushed, remove all successfully pushed elements from locator capture list
+        const remaining = capturedElements.filter(e => !pushedIds.has(e.id));
+        const reindexed = remaining.map((el, idx) => ({
+          ...el,
+          sequence: idx + 1,
+          name: el.name.replace(/#\d+/, `#${idx + 1}`)
+        }));
+        setCapturedElements(reindexed);
+        try {
+          localStorage.setItem(storageKey, JSON.stringify(reindexed));
+        } catch {}
+        api.finder.setCapturedSequence(reindexed.length);
+        setSelectedElementId(reindexed[0]?.id || null);
+        setSuccessMsg(`Pushed ${successCount} element(s) to Repository successfully and removed from Locator Finder!`);
+      } else {
+        setErrorMsg('Failed to push elements to repository. Please verify locator syntax and page selection.');
+      }
       setIsReviewModalOpen(false);
     } catch (err: any) {
       setErrorMsg(err.message || 'Error occurred during batch push');

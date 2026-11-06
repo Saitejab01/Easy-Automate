@@ -287,6 +287,11 @@ ipcMain.handle('finder:getStatus', async () => {
   return finderSession.getStatus();
 });
 
+ipcMain.handle('finder:setCapturedSequence', async (_event, count: number) => {
+  finderSession.setCapturedSequence(count);
+  return { success: true };
+});
+
 // ================= Stage 2: Dashboard IPC Handlers ================= //
 
 ipcMain.handle('dashboard:getStats', async (_event, projectId: string) => {

@@ -214,7 +214,7 @@ export const RepositoryView: React.FC<RepositoryViewProps> = ({ project }) => {
     }
   };
 
-  // Save Element from Drawer
+  // Save Element from Drawer or Locator Finder
   const handleSaveElement = async (elementData: {
     name: string;
     type: ElementType;
@@ -223,19 +223,30 @@ export const RepositoryView: React.FC<RepositoryViewProps> = ({ project }) => {
     locators: Locator[];
     overwriteElementId?: string;
   }) => {
-    const targetId = elementData.overwriteElementId || (elementToEdit ? elementToEdit.id : null);
+    // Only update if overwriteElementId is explicitly given OR if drawer is actively open with elementToEdit
+    const targetId = elementData.overwriteElementId || (isDrawerOpen && elementToEdit ? elementToEdit.id : null);
     if (targetId) {
       const res = await api.repository.updateElement(targetId, project.id, elementData);
       if (res.success && res.element) {
-        setElements(elements.map(e => (e.id === targetId ? res.element! : e)));
+        setElements(prev => prev.map(e => (e.id === targetId ? res.element! : e)));
+        if (elementData.pageId) {
+          setSelectedPageId(elementData.pageId);
+        }
+        await loadRepository();
         return { success: true };
       }
       return { success: false, error: res.error };
     } else {
       const res = await api.repository.createElement(project.id, elementData.pageId, elementData);
       if (res.success && res.element) {
-        setElements([...elements, res.element]);
-        setSelectedPageId(elementData.pageId);
+        setElements(prev => {
+          const exists = prev.some(e => e.id === res.element!.id);
+          return exists ? prev.map(e => (e.id === res.element!.id ? res.element! : e)) : [...prev, res.element!];
+        });
+        if (elementData.pageId) {
+          setSelectedPageId(elementData.pageId);
+        }
+        await loadRepository();
         return { success: true };
       }
       return { success: false, error: res.error };
@@ -363,7 +374,10 @@ export const RepositoryView: React.FC<RepositoryViewProps> = ({ project }) => {
 
         <div className="flex items-center gap-3">
           <button
-            onClick={() => setIsFinderOpen(true)}
+            onClick={() => {
+              setElementToEdit(null);
+              setIsFinderOpen(true);
+            }}
             className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold bg-gradient-to-r from-purple-600 via-indigo-600 to-brand-600 hover:from-purple-500 hover:to-brand-500 text-white shadow-md shadow-purple-600/25 transition-all hover:scale-[1.02]"
             title="Open Interactive Locator Finder & Inspector"
           >
@@ -644,7 +658,10 @@ export const RepositoryView: React.FC<RepositoryViewProps> = ({ project }) => {
       {isFinderOpen && (
         <LocatorFinderModal
           isOpen={isFinderOpen}
-          onClose={() => setIsFinderOpen(false)}
+          onClose={() => {
+            setIsFinderOpen(false);
+            loadRepository();
+          }}
           project={project}
           pages={pages}
           selectedPageId={selectedPageId}
