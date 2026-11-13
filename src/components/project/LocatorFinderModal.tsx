@@ -54,6 +54,7 @@ interface LocatorFinderModalProps {
   onSaveElement: (elementData: {
     name: string;
     type: ElementType;
+    elementMode?: 'Static' | 'Dynamic';
     description?: string;
     pageId: string;
     locators: Locator[];
@@ -151,7 +152,14 @@ export const LocatorFinderModal: React.FC<LocatorFinderModalProps> = ({
   const storageKey = `ea_finder_captured_${project?.id || 'default'}`;
 
   // Browser configuration & session states
-  const [inspectUrl, setInspectUrl] = useState(project?.baseUrl || 'https://demo.playwright.dev');
+  const [inspectUrl, setInspectUrl] = useState(() => {
+    try {
+      const saved = localStorage.getItem(`ea_finder_url_${project?.id || 'default'}`);
+      if (saved && saved.trim()) return saved.trim();
+    } catch {}
+    if (project?.baseUrl && project.baseUrl.trim()) return project.baseUrl.trim();
+    return 'https://demo.playwright.dev/todomvc';
+  });
   const [browserType, setBrowserType] = useState<'chromium' | 'firefox' | 'webkit'>('chromium');
   const [captureMode, setCaptureMode] = useState<'normal' | 'reference'>('normal');
   const [sessionStatus, setSessionStatus] = useState<'idle' | 'capturing' | 'paused' | 'closed'>('idle');
@@ -188,11 +196,12 @@ export const LocatorFinderModal: React.FC<LocatorFinderModalProps> = ({
   const [targetPageOverrides, setTargetPageOverrides] = useState<Record<string, string>>({});
   const [isPushingBatch, setIsPushingBatch] = useState(false);
 
-  // Persist captured elements whenever changed
+  // Persist captured elements whenever changed & sync with Electron backend
   useEffect(() => {
     try {
       localStorage.setItem(storageKey, JSON.stringify(capturedElements));
     } catch {}
+    api.finder.syncSessionElements(capturedElements).catch(() => {});
   }, [capturedElements, storageKey]);
 
   // Keep selectedElementId valid
@@ -216,8 +225,45 @@ export const LocatorFinderModal: React.FC<LocatorFinderModalProps> = ({
       }
     }).catch(() => {});
 
-    const unsubCapture = api.finder.onElementCaptured((capturedRecord: FinderCapturedElement) => {
+    const unsubCapture = api.finder.onElementCaptured((capturedRecord: FinderCapturedElement & { isDuplicate?: boolean }) => {
+      if (capturedRecord.isDuplicate) {
+        setSelectedElementId(capturedRecord.id);
+        setSuccessMsg(`Element already exists in session (#${capturedRecord.sequence}: "${capturedRecord.name}") — Selected.`);
+        setErrorMsg(null);
+        return;
+      }
+
       setCapturedElements(prev => {
+        // Double-check client-side against any existing elements in current session
+        const duplicate = prev.find(item => {
+          if (item.id === capturedRecord.id) return true;
+          const itemPrimary = item.locators.find(l => l.isPrimary) || item.locators[0];
+          const capPrimary = capturedRecord.locators.find(l => l.isPrimary) || capturedRecord.locators[0];
+          if (
+            itemPrimary &&
+            capPrimary &&
+            itemPrimary.type === capPrimary.type &&
+            itemPrimary.value.trim().toLowerCase() === capPrimary.value.trim().toLowerCase()
+          ) {
+            return true;
+          }
+          if (
+            item.tag?.toLowerCase() === capturedRecord.tag?.toLowerCase() &&
+            item.name.trim().toLowerCase() === capturedRecord.name.trim().toLowerCase() &&
+            (item.visibleText || '').trim().toLowerCase() === (capturedRecord.visibleText || '').trim().toLowerCase()
+          ) {
+            return true;
+          }
+          return false;
+        });
+
+        if (duplicate) {
+          setSelectedElementId(duplicate.id);
+          setSuccessMsg(`Element already exists in session (#${duplicate.sequence}: "${duplicate.name}") — Selected.`);
+          setErrorMsg(null);
+          return prev;
+        }
+
         const nextSeq = prev.length + 1;
         const normalized: FinderCapturedElement = {
           ...capturedRecord,
@@ -231,11 +277,11 @@ export const LocatorFinderModal: React.FC<LocatorFinderModalProps> = ({
         try {
           localStorage.setItem(storageKey, JSON.stringify(next));
         } catch {}
+        setSelectedElementId(normalized.id);
+        setSuccessMsg(`Captured element (#${nextSeq}: "${normalized.name}") successfully! Live browser remains open.`);
+        setErrorMsg(null);
         return next;
       });
-      setSelectedElementId(capturedRecord.id);
-      setSuccessMsg(`Captured element successfully! Live browser remains open for continuous capture.`);
-      setErrorMsg(null);
     });
 
     const unsubDisconnect = api.finder.onBrowserDisconnected(() => {
@@ -276,7 +322,7 @@ export const LocatorFinderModal: React.FC<LocatorFinderModalProps> = ({
       id: 'strat_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
       type,
       value,
-      valueType: /\{[^}]+\}/.test(value) ? 'Dynamic' : 'Static',
+      valueType: 'Static',
       isPrimary,
       priority,
       selected: true,
@@ -286,6 +332,35 @@ export const LocatorFinderModal: React.FC<LocatorFinderModalProps> = ({
       feedback: evaluation.feedback,
       matchCount: 1
     };
+  };
+
+  // Create a new blank captured element manually
+  const handleCreateElement = () => {
+    const seq = capturedElements.length + 1;
+    const defaultStrat = createFinderStrategy('ID', `element_${seq}`, true, 1);
+    const newElement: FinderCapturedElement = {
+      id: 'custom_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+      sequence: seq,
+      name: `Custom Element #${seq}`,
+      type: 'Button',
+      tag: 'button',
+      visibleText: `Custom Element ${seq}`,
+      accessibleName: `Custom Element ${seq}`,
+      description: 'Manually created element in Locator Finder',
+      locators: [defaultStrat],
+      primaryLocatorId: defaultStrat.id,
+      targetPageId: defaultPageId,
+      pushed: false,
+      capturedAt: new Date().toISOString()
+    };
+    const next = [...capturedElements, newElement];
+    setCapturedElements(next);
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(next));
+    } catch {}
+    api.finder.setCapturedSequence(next.length);
+    setSelectedElementId(newElement.id);
+    setSuccessMsg(`Created new element: "${newElement.name}"`);
   };
 
   // Load a built-in sample element
@@ -325,8 +400,16 @@ export const LocatorFinderModal: React.FC<LocatorFinderModalProps> = ({
   const handleStartSession = async () => {
     setIsStartingSession(true);
     setErrorMsg(null);
+    let target = inspectUrl.trim();
+    if (!target || target === 'https://demo.playwright.dev' || target === 'demo.playwright.dev' || target === 'https://demo.playwright.dev/') {
+      target = 'https://demo.playwright.dev/todomvc';
+      setInspectUrl(target);
+    }
     try {
-      const res = await api.finder.startSession(inspectUrl, browserType, captureMode);
+      localStorage.setItem(`ea_finder_url_${project?.id || 'default'}`, target);
+    } catch {}
+    try {
+      const res = await api.finder.startSession(target, browserType, captureMode);
       if (res.success) {
         setSessionStatus('capturing');
         setSuccessMsg('Live browser session active. Hover and click elements on the page to capture locators continuously.');
@@ -433,7 +516,9 @@ export const LocatorFinderModal: React.FC<LocatorFinderModalProps> = ({
         merged.stability = evalResult.stability;
         merged.reasons = evalResult.reasons;
         merged.feedback = evalResult.feedback;
-        merged.valueType = /\{[^}]+\}/.test(merged.value) ? 'Dynamic' : 'Static';
+      }
+      if (updates.valueType !== undefined) {
+        merged.valueType = updates.valueType;
       }
       return merged;
     });
@@ -595,6 +680,7 @@ export const LocatorFinderModal: React.FC<LocatorFinderModalProps> = ({
       const res = await onSaveElement({
         name: selectedElement.name.trim(),
         type: selectedElement.type,
+        elementMode: selectedElement.elementMode || 'Static',
         description: selectedElement.description?.trim(),
         pageId: targetPage,
         locators: locatorsPayload,
@@ -680,6 +766,7 @@ export const LocatorFinderModal: React.FC<LocatorFinderModalProps> = ({
         const res = await onSaveElement({
           name: item.name.trim(),
           type: item.type,
+          elementMode: item.elementMode || 'Static',
           description: item.description?.trim(),
           pageId: targetPage,
           locators: locatorsPayload,
@@ -788,7 +875,13 @@ export const LocatorFinderModal: React.FC<LocatorFinderModalProps> = ({
               <input
                 type="text"
                 value={inspectUrl}
-                onChange={e => setInspectUrl(e.target.value)}
+                onChange={e => {
+                  const val = e.target.value;
+                  setInspectUrl(val);
+                  try {
+                    localStorage.setItem(`ea_finder_url_${project?.id || 'default'}`, val);
+                  } catch {}
+                }}
                 placeholder="https://example.com"
                 className="w-full pl-9 pr-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 focus:border-brand-500 text-slate-200 text-xs transition-colors"
               />
@@ -938,9 +1031,9 @@ export const LocatorFinderModal: React.FC<LocatorFinderModalProps> = ({
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-2">
                   <h3 className="text-xs font-bold text-white uppercase tracking-wider">
-                    Captured Elements
+                    Current Session Elements
                   </h3>
-                  <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-slate-800 text-slate-300 border border-slate-700">
+                  <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-cyan-950 text-cyan-300 border border-cyan-800/60">
                     {capturedElements.length}
                   </span>
                 </div>
@@ -968,16 +1061,27 @@ export const LocatorFinderModal: React.FC<LocatorFinderModalProps> = ({
                     </div>
                   </div>
 
-                  {capturedElements.length > 0 && (
+                  <div className="flex items-center space-x-1">
                     <button
                       type="button"
-                      onClick={handleClearAll}
-                      className="px-2 py-1 rounded-lg text-[11px] text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
-                      title="Clear all captured elements"
+                      onClick={handleCreateElement}
+                      className="px-2 py-0.5 rounded-lg text-[11px] font-medium bg-brand-500/10 border border-brand-500/20 text-brand-300 hover:bg-brand-500/20 transition-colors flex items-center space-x-1"
+                      title="Add a custom element manually"
                     >
-                      Clear
+                      <Plus className="w-3 h-3" />
+                      <span>Add</span>
                     </button>
-                  )}
+                    {capturedElements.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleClearAll}
+                        className="px-2 py-0.5 rounded-lg text-[11px] text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
+                        title="Clear all captured elements"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -1054,7 +1158,7 @@ export const LocatorFinderModal: React.FC<LocatorFinderModalProps> = ({
                               e.stopPropagation();
                               handleDeleteElement(el.id);
                             }}
-                            className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 opacity-0 group-hover:opacity-100 transition-opacity"
+                            className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
                             title="Delete this element from capture session"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -1062,13 +1166,31 @@ export const LocatorFinderModal: React.FC<LocatorFinderModalProps> = ({
                         </div>
                       </div>
 
-                      <div className="flex items-center space-x-2 mt-2 text-[11px] text-slate-400">
-                        <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-mono text-[10px]">
-                          &lt;{el.tag || 'div'}&gt;
-                        </span>
-                        <span className="text-slate-400">{el.type}</span>
-                        <span className="text-slate-600">•</span>
-                        <span className="text-slate-400">{el.locators.length} locators</span>
+                      <div className="flex items-center justify-between mt-2 pt-1.5 border-t border-slate-800/60 text-[11px]">
+                        <div className="flex items-center space-x-1.5 text-slate-400">
+                          <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-mono text-[10px]">
+                            &lt;{el.tag || 'div'}&gt;
+                          </span>
+                          <span className="text-slate-400">{el.type}</span>
+                          <span className="text-slate-600">•</span>
+                          <span className="text-slate-400">{el.locators.length} locators</span>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedElementId(el.id);
+                          }}
+                          className={`px-2 py-0.5 rounded text-[10px] font-semibold flex items-center space-x-1 transition-colors ${
+                            isSelected
+                              ? 'bg-brand-500/20 text-brand-300 border border-brand-500/40'
+                              : 'bg-slate-800/80 text-slate-300 hover:bg-brand-500/10 hover:text-brand-300 border border-slate-700/60'
+                          }`}
+                        >
+                          <Eye className="w-3 h-3" />
+                          <span>{isSelected ? 'Viewing' : 'Open'}</span>
+                        </button>
                       </div>
 
                       {el.referenceMode && el.referenceData && (
@@ -1101,6 +1223,15 @@ export const LocatorFinderModal: React.FC<LocatorFinderModalProps> = ({
                     </div>
 
                     <div className="flex items-center space-x-2">
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteElement(selectedElement.id)}
+                        className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-300 flex items-center space-x-1.5 transition-colors"
+                        title="Delete this element from session"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Delete</span>
+                      </button>
                       <button
                         type="button"
                         onClick={handlePushSingle}
@@ -1179,6 +1310,34 @@ export const LocatorFinderModal: React.FC<LocatorFinderModalProps> = ({
                       placeholder="Optional notes or context for automated test scripts..."
                       className="w-full px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 focus:border-brand-500 text-slate-300 text-xs"
                     />
+                  </div>
+
+                  {/* Inspected Attributes & Metadata */}
+                  <div className="bg-slate-900/60 border border-slate-800/80 rounded-xl p-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-[11px] text-slate-300">
+                    <div className="flex items-center space-x-1.5">
+                      <span className="text-slate-500 font-medium">Tag:</span>
+                      <span className="font-mono text-cyan-300 px-1.5 py-0.5 rounded bg-cyan-950/60 border border-cyan-800/50">&lt;{selectedElement.tag || 'button'}&gt;</span>
+                    </div>
+                    {selectedElement.visibleText && (
+                      <div className="flex items-center space-x-1.5 max-w-[280px] truncate">
+                        <span className="text-slate-500 font-medium">Text:</span>
+                        <span className="text-slate-200 font-mono truncate" title={selectedElement.visibleText}>"{selectedElement.visibleText}"</span>
+                      </div>
+                    )}
+                    {selectedElement.accessibleName && selectedElement.accessibleName !== selectedElement.visibleText && (
+                      <div className="flex items-center space-x-1.5 max-w-[280px] truncate">
+                        <span className="text-slate-500 font-medium">Accessible:</span>
+                        <span className="text-slate-200 font-mono truncate" title={selectedElement.accessibleName}>"{selectedElement.accessibleName}"</span>
+                      </div>
+                    )}
+                    <div className="flex items-center space-x-1.5">
+                      <span className="text-slate-500 font-medium">Mode:</span>
+                      <span className="text-slate-300 font-semibold">{selectedElement.elementMode || 'Static'}</span>
+                    </div>
+                    <div className="flex items-center space-x-1.5 ml-auto text-slate-500 text-[10px]">
+                      <span>Captured:</span>
+                      <span>{new Date(selectedElement.capturedAt).toLocaleTimeString()}</span>
+                    </div>
                   </div>
                 </div>
 

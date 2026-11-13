@@ -24,7 +24,8 @@ import {
   RefreshCw,
   HardDrive,
   Code,
-  Copy
+  Copy,
+  Trash2
 } from 'lucide-react';
 import { api } from '../../api/client';
 import {
@@ -60,6 +61,10 @@ export const ExecutionView: React.FC<ExecutionViewProps> = ({ project, selectedE
   // Playwright TS Code modal
   const [isCodeModalOpen, setIsCodeModalOpen] = useState(false);
   const [codeCopied, setCodeCopied] = useState(false);
+
+  // Multi-select & Bulk Delete State
+  const [selectedExecIds, setSelectedExecIds] = useState<Set<string>>(new Set());
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
 
   useEffect(() => {
     loadExecutions();
@@ -104,6 +109,49 @@ export const ExecutionView: React.FC<ExecutionViewProps> = ({ project, selectedE
       else next.add(execId);
       return next;
     });
+  };
+
+  const handleToggleSelectExec = (execId: string, e: React.MouseEvent | React.ChangeEvent) => {
+    e.stopPropagation();
+    setSelectedExecIds(prev => {
+      const next = new Set(prev);
+      if (next.has(execId)) next.delete(execId);
+      else next.add(execId);
+      return next;
+    });
+  };
+
+  const handleToggleSelectAllExecs = () => {
+    if (selectedExecIds.size === filteredExecutions.length) {
+      setSelectedExecIds(new Set());
+    } else {
+      setSelectedExecIds(new Set(filteredExecutions.map(e => e.id)));
+    }
+  };
+
+  const handleBulkDeleteExecs = async () => {
+    if (selectedExecIds.size === 0) return;
+    const count = selectedExecIds.size;
+    if (!window.confirm(`Are you sure you want to delete ${count} selected execution run(s)?`)) {
+      return;
+    }
+
+    setIsBulkDeleting(true);
+    try {
+      for (const execId of Array.from(selectedExecIds)) {
+        await api.execution.deleteExecution(project.id, execId);
+      }
+      const remaining = executions.filter(e => !selectedExecIds.has(e.id));
+      setExecutions(remaining);
+      if (activeExecId && selectedExecIds.has(activeExecId)) {
+        setActiveExecId(remaining.length > 0 ? remaining[0].id : null);
+      }
+      setSelectedExecIds(new Set());
+    } catch (err: any) {
+      alert(err.message || 'Error deleting execution records');
+    } finally {
+      setIsBulkDeleting(false);
+    }
   };
 
   const activeExecution = executions.find(e => e.id === activeExecId) || executions[0];
@@ -151,23 +199,68 @@ export const ExecutionView: React.FC<ExecutionViewProps> = ({ project, selectedE
             />
           </div>
 
-          <div className="flex items-center gap-1 overflow-x-auto pb-0.5">
-            {['All', 'Passed', 'Failed', 'Running'].map(st => (
-              <button
-                key={st}
-                type="button"
-                onClick={() => setStatusFilter(st)}
-                className={`px-2 py-0.5 rounded-md text-[10px] font-semibold transition-all ${
-                  statusFilter === st
-                    ? 'bg-brand-600 text-white'
-                    : 'bg-slate-900 text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                {st}
-              </button>
-            ))}
+          <div className="flex items-center justify-between gap-1 overflow-x-auto pb-0.5">
+            <div className="flex items-center gap-1">
+              {['All', 'Passed', 'Failed', 'Running'].map(st => (
+                <button
+                  key={st}
+                  type="button"
+                  onClick={() => setStatusFilter(st)}
+                  className={`px-2 py-0.5 rounded-md text-[10px] font-semibold transition-all ${
+                    statusFilter === st
+                      ? 'bg-brand-600 text-white'
+                      : 'bg-slate-900 text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  {st}
+                </button>
+              ))}
+            </div>
+
+            {filteredExecutions.length > 0 && (
+              <div className="flex items-center gap-1.5 pl-2 shrink-0">
+                <input
+                  type="checkbox"
+                  checked={filteredExecutions.length > 0 && selectedExecIds.size === filteredExecutions.length}
+                  onChange={handleToggleSelectAllExecs}
+                  className="w-3.5 h-3.5 rounded bg-slate-900 border-slate-700 text-brand-600 focus:ring-0 cursor-pointer"
+                  title={selectedExecIds.size === filteredExecutions.length ? 'Deselect All' : 'Select All'}
+                />
+                <span className="text-[10px] text-slate-400">All</span>
+              </div>
+            )}
           </div>
         </div>
+
+        {/* Bulk Action Toolbar */}
+        {selectedExecIds.size > 0 && (
+          <div className="p-2.5 mx-2 my-1 rounded-xl bg-brand-950/60 border border-brand-500/30 flex items-center justify-between gap-2 shadow-lg animate-fadeIn text-xs">
+            <div className="flex items-center gap-1.5 font-semibold text-brand-300 text-[11px]">
+              <CheckCircle2 className="w-3.5 h-3.5 text-brand-400" />
+              <span>{selectedExecIds.size} Selected</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={handleBulkDeleteExecs}
+                disabled={isBulkDeleting}
+                className="px-2 py-1 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-[10px] font-semibold flex items-center gap-1 transition-colors disabled:opacity-50"
+                title="Delete selected execution runs"
+              >
+                <Trash2 className="w-3 h-3" />
+                <span>Delete</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedExecIds(new Set())}
+                className="p-1 text-slate-400 hover:text-white rounded-lg transition-colors"
+                title="Deselect All"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Executions List */}
         <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
@@ -179,6 +272,7 @@ export const ExecutionView: React.FC<ExecutionViewProps> = ({ project, selectedE
             filteredExecutions.map(exec => {
               const isSelected = activeExecId === exec.id;
               const isExpanded = expandedExecIds.has(exec.id);
+              const isChecked = selectedExecIds.has(exec.id);
 
               return (
                 <div key={exec.id} className="space-y-1">
@@ -193,11 +287,20 @@ export const ExecutionView: React.FC<ExecutionViewProps> = ({ project, selectedE
                     className={`p-3 rounded-2xl border cursor-pointer transition-all ${
                       isSelected
                         ? 'bg-slate-800/90 border-brand-500/50 shadow-md'
+                        : isChecked
+                        ? 'bg-slate-900/90 border-brand-500/30'
                         : 'bg-slate-950/70 border-slate-800/80 hover:bg-slate-800/40'
                     }`}
                   >
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-1.5">
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={(e) => handleToggleSelectExec(exec.id, e)}
+                          onClick={(e) => e.stopPropagation()}
+                          className="w-3.5 h-3.5 rounded bg-slate-900 border-slate-700 text-brand-600 focus:ring-0 cursor-pointer shrink-0 mr-0.5"
+                        />
                         <button
                           type="button"
                           onClick={(e) => handleToggleExpandExec(exec.id, e)}

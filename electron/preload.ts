@@ -33,12 +33,21 @@ export const electronAPI = {
       ipcRenderer.invoke('repository:createElement', { projectId, pageId, data }),
     updateElement: (elementId: string, projectId: string, data: any) =>
       ipcRenderer.invoke('repository:updateElement', { elementId, projectId, data }),
-    deleteElement: (elementId: string, projectId: string) =>
-      ipcRenderer.invoke('repository:deleteElement', { elementId, projectId }),
+    deleteElement: (elementId: string, projectId: string, force?: boolean) =>
+      ipcRenderer.invoke('repository:deleteElement', { elementId, projectId, force }),
+    checkDependencies: (elementId: string, projectId: string) =>
+      ipcRenderer.invoke('repository:checkDependencies', { elementId, projectId }),
     testLocator: (locatorType: string, locatorValue: string) =>
       ipcRenderer.invoke('repository:testLocator', { locatorType, locatorValue }),
     inspectElement: (url: string) =>
       ipcRenderer.invoke('repository:inspectElement', { url }),
+    onElementChanged: (callback: (data: any) => void) => {
+      const handler = (_: any, data: any) => callback(data);
+      ipcRenderer.on('repository:elementChanged', handler);
+      return () => {
+        ipcRenderer.removeListener('repository:elementChanged', handler);
+      };
+    },
   },
   finder: {
     startSession: (url: string, browserType?: 'chromium' | 'firefox' | 'webkit', captureMode?: 'normal' | 'reference') =>
@@ -59,6 +68,8 @@ export const electronAPI = {
       ipcRenderer.invoke('finder:getStatus'),
     setCapturedSequence: (count: number) =>
       ipcRenderer.invoke('finder:setCapturedSequence', count),
+    syncSessionElements: (elements: any[]) =>
+      ipcRenderer.invoke('finder:syncSessionElements', elements),
     onElementCaptured: (callback: (element: any) => void) => {
       const subscription = (_event: any, data: any) => callback(data);
       ipcRenderer.on('finder:elementCaptured', subscription);
@@ -107,8 +118,10 @@ export const electronAPI = {
       ipcRenderer.invoke('scripts:createScript', { projectId, moduleId, name, createdBy, description }),
     updateScript: (scriptId: string, projectId: string, updates: any) =>
       ipcRenderer.invoke('scripts:updateScript', { scriptId, projectId, updates }),
-    deleteScript: (scriptId: string, projectId: string) =>
-      ipcRenderer.invoke('scripts:deleteScript', { scriptId, projectId }),
+    deleteScript: (scriptId: string, projectId: string, force?: boolean) =>
+      ipcRenderer.invoke('scripts:deleteScript', { scriptId, projectId, force }),
+    checkDependencies: (scriptId: string, projectId: string) =>
+      ipcRenderer.invoke('scripts:checkDependencies', { scriptId, projectId }),
 
     addStep: (scriptId: string, projectId: string, step: any, insertAfterStepNumber?: number) =>
       ipcRenderer.invoke('scripts:addStep', { scriptId, projectId, step, insertAfterStepNumber }),
@@ -141,6 +154,8 @@ export const electronAPI = {
       ipcRenderer.invoke('execution:getExecutionById', { executionId, projectId }),
     executeScript: (projectId: string, scriptId: string, customSettings?: any) =>
       ipcRenderer.invoke('execution:executeScript', { projectId, scriptId, customSettings }),
+    deleteExecution: (executionId: string, projectId: string) =>
+      ipcRenderer.invoke('execution:deleteExecution', { executionId, projectId }),
   },
   excel: {
     getData: (projectId: string, fileName: string, sheetName: string, uniqueData: string) =>
@@ -158,6 +173,74 @@ export const electronAPI = {
     minimize: () => ipcRenderer.send('window:minimize'),
     maximize: () => ipcRenderer.send('window:maximize'),
     close: () => ipcRenderer.send('window:close'),
+  },
+  aiAutoTesting: {
+    selectFile: () => ipcRenderer.invoke('aiAutoTesting:selectFile'),
+    getModels: () => ipcRenderer.invoke('aiAutoTesting:getModels'),
+    saveModel: (config: any) => ipcRenderer.invoke('aiAutoTesting:saveModel', config),
+    deleteModel: (modelId: string) => ipcRenderer.invoke('aiAutoTesting:deleteModel', { modelId }),
+    setDefaultModel: (modelId: string) => ipcRenderer.invoke('aiAutoTesting:setDefaultModel', { modelId }),
+    testModelConnection: (modelId?: string, config?: any) =>
+      ipcRenderer.invoke('aiAutoTesting:testModelConnection', { modelId, config }),
+    testModelPrompt: (modelId: string, prompt: string) =>
+      ipcRenderer.invoke('aiAutoTesting:testModelPrompt', { modelId, prompt }),
+
+    getDocuments: (projectId: string) =>
+      ipcRenderer.invoke('aiAutoTesting:getDocuments', { projectId }),
+    uploadDocument: (projectId: string, filePath: string) =>
+      ipcRenderer.invoke('aiAutoTesting:uploadDocument', { projectId, filePath }),
+    updateDocumentCategory: (documentId: string, projectId: string, userCategory: any) =>
+      ipcRenderer.invoke('aiAutoTesting:updateDocumentCategory', { documentId, projectId, userCategory }),
+    deleteDocument: (documentId: string, projectId: string) =>
+      ipcRenderer.invoke('aiAutoTesting:deleteDocument', { documentId, projectId }),
+
+    getTestCases: (projectId: string) =>
+      ipcRenderer.invoke('aiAutoTesting:getTestCases', { projectId }),
+    extractTestCasesFromDoc: (documentId: string, projectId: string) =>
+      ipcRenderer.invoke('aiAutoTesting:extractTestCasesFromDoc', { documentId, projectId }),
+    generateTestCasesFromBRD: (documentId: string, userPrompt: string, projectId: string) =>
+      ipcRenderer.invoke('aiAutoTesting:generateTestCasesFromBRD', { documentId, userPrompt, projectId }),
+    saveTestCase: (tcData: any) =>
+      ipcRenderer.invoke('aiAutoTesting:saveTestCase', tcData),
+    acceptTestCase: (testCaseId: string, projectId: string) =>
+      ipcRenderer.invoke('aiAutoTesting:acceptTestCase', { testCaseId, projectId }),
+    deleteTestCase: (testCaseId: string, projectId: string) =>
+      ipcRenderer.invoke('aiAutoTesting:deleteTestCase', { testCaseId, projectId }),
+
+    getSessions: (projectId: string) =>
+      ipcRenderer.invoke('aiAutoTesting:getSessions', { projectId }),
+    startDevelopmentSession: (testCaseId: string, projectId: string, customUrl?: string) =>
+      ipcRenderer.invoke('aiAutoTesting:startDevelopmentSession', { testCaseId, projectId, customUrl }),
+    pauseSession: () => ipcRenderer.invoke('aiAutoTesting:pauseSession'),
+    resumeSession: () => ipcRenderer.invoke('aiAutoTesting:resumeSession'),
+    stopSession: () => ipcRenderer.invoke('aiAutoTesting:stopSession'),
+    retryStep: (sessionId: string, projectId: string, stepNumber: number) =>
+      ipcRenderer.invoke('aiAutoTesting:retryStep', { sessionId, projectId, stepNumber }),
+
+    pushToTestDev: (sessionId: string, projectId: string, targetModuleId: string, scriptName: string, userId: string) =>
+      ipcRenderer.invoke('aiAutoTesting:pushToTestDev', { sessionId, projectId, targetModuleId, scriptName, userId }),
+
+    saveSession: (session: any) =>
+      ipcRenderer.invoke('aiAutoTesting:saveSession', session),
+
+    deleteSession: (sessionId: string, projectId: string) =>
+      ipcRenderer.invoke('aiAutoTesting:deleteSession', { sessionId, projectId }),
+
+    getUsageLogs: (modelId?: string) =>
+      ipcRenderer.invoke('aiAutoTesting:getUsageLogs', { modelId }),
+
+    getFingerprints: (projectId?: string) =>
+      ipcRenderer.invoke('aiAutoTesting:getFingerprints', { projectId }),
+    getFingerprint: (elementId: string) =>
+      ipcRenderer.invoke('aiAutoTesting:getFingerprint', { elementId }),
+    deleteFingerprint: (elementId: string) =>
+      ipcRenderer.invoke('aiAutoTesting:deleteFingerprint', { elementId }),
+
+    onSessionUpdate: (callback: (session: any) => void) => {
+      const handler = (_event: any, session: any) => callback(session);
+      ipcRenderer.on('aiAutoTesting:sessionUpdate', handler);
+      return () => ipcRenderer.removeListener('aiAutoTesting:sessionUpdate', handler);
+    }
   }
 };
 

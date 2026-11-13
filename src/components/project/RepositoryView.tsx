@@ -17,7 +17,9 @@ import {
   Layers,
   Code2,
   AlertCircle,
-  Crosshair
+  Crosshair,
+  Zap,
+  X
 } from 'lucide-react';
 import { api } from '../../api/client';
 import { Project, RepositoryPage, RepositoryElement, Locator, ElementType } from '../../api/types';
@@ -55,6 +57,15 @@ export const RepositoryView: React.FC<RepositoryViewProps> = ({ project }) => {
     id: string;
     name: string;
   } | null>(null);
+  const [deleteDependencyWarning, setDeleteDependencyWarning] = useState<{
+    elementId: string;
+    elementName: string;
+    dependentScripts: Array<{ id: string; name: string; stepNumbers: number[] }>;
+  } | null>(null);
+
+  // Multi-select & Bulk Delete State
+  const [selectedElementIds, setSelectedElementIds] = useState<Set<string>>(new Set());
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
 
   const loadRepository = async () => {
     setIsLoading(true);
@@ -78,10 +89,11 @@ export const RepositoryView: React.FC<RepositoryViewProps> = ({ project }) => {
       const rootIds = new Set(loadedPages.filter(p => p && !p.parentId).map(p => p.id));
       setExpandedPageIds(rootIds);
 
-      // Select first page if none selected
+      // Select first page with elements, or first page if none selected
       setSelectedPageId(prev => {
         if (prev && loadedPages.some(p => p && p.id === prev)) return prev;
-        return loadedPages[0]?.id || '';
+        const pageWithElements = loadedPages.find(p => loadedElements.some(e => e.pageId === p.id));
+        return pageWithElements?.id || loadedPages[0]?.id || '';
       });
     } catch (err) {
       console.error('Failed to load repository:', err);
@@ -92,6 +104,16 @@ export const RepositoryView: React.FC<RepositoryViewProps> = ({ project }) => {
 
   useEffect(() => {
     loadRepository();
+    // Application-wide automatic synchronization (Section 8)
+    const unsub = api.repository.onElementChanged((data: any) => {
+      loadRepository();
+      if (data?.element?.pageId) {
+        setSelectedPageId(data.element.pageId);
+      }
+    });
+    return () => {
+      unsub();
+    };
   }, [project.id]);
 
   // Toggle page expanded/collapsed
@@ -187,8 +209,8 @@ export const RepositoryView: React.FC<RepositoryViewProps> = ({ project }) => {
     }
   };
 
-  // Delete Action
-  const handleConfirmDelete = async () => {
+  // Delete Action with Dependency Protection (Section 8.1)
+  const handleConfirmDelete = async (force: boolean = false) => {
     if (!itemToDelete) return;
 
     try {
@@ -201,16 +223,69 @@ export const RepositoryView: React.FC<RepositoryViewProps> = ({ project }) => {
           if (selectedPageId === itemToDelete.id) {
             setSelectedPageId(remainingPages[0]?.id || '');
           }
+          setItemToDelete(null);
         }
       } else {
-        const res = await api.repository.deleteElement(itemToDelete.id, project.id);
+        const res = await api.repository.deleteElement(itemToDelete.id, project.id, force);
         if (res.success) {
           setElements(elements.filter(e => e.id !== itemToDelete.id));
+          setItemToDelete(null);
+          setDeleteDependencyWarning(null);
+          await loadRepository();
+        } else if (res.hasDependencies) {
+          setDeleteDependencyWarning({
+            elementId: itemToDelete.id,
+            elementName: itemToDelete.name,
+            dependentScripts: res.dependentScripts || []
+          });
+        } else {
+          alert(res.error || 'Failed to delete element');
+          setItemToDelete(null);
         }
       }
-      setItemToDelete(null);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to delete item:', err);
+      alert(err.message || 'Failed to delete item');
+    }
+  };
+
+  // Multi-select actions
+  const handleToggleSelectElement = (elementId: string, e: React.MouseEvent | React.ChangeEvent) => {
+    e.stopPropagation();
+    setSelectedElementIds(prev => {
+      const next = new Set(prev);
+      if (next.has(elementId)) next.delete(elementId);
+      else next.add(elementId);
+      return next;
+    });
+  };
+
+  const handleToggleSelectAllElements = () => {
+    if (selectedElementIds.size === filteredElements.length) {
+      setSelectedElementIds(new Set());
+    } else {
+      setSelectedElementIds(new Set(filteredElements.map(e => e.id)));
+    }
+  };
+
+  const handleBulkDeleteElements = async () => {
+    if (selectedElementIds.size === 0) return;
+    const count = selectedElementIds.size;
+    if (!window.confirm(`Are you sure you want to delete ${count} selected element(s)? Any script step referencing them will need updating.`)) {
+      return;
+    }
+
+    setIsBulkDeleting(true);
+    try {
+      for (const elId of Array.from(selectedElementIds)) {
+        await api.repository.deleteElement(elId, project.id, true);
+      }
+      setSelectedElementIds(new Set());
+      await loadRepository();
+    } catch (err: any) {
+      alert(err.message || 'Error deleting elements');
+    } finally {
+      setIsBulkDeleting(false);
     }
   };
 
@@ -218,13 +293,14 @@ export const RepositoryView: React.FC<RepositoryViewProps> = ({ project }) => {
   const handleSaveElement = async (elementData: {
     name: string;
     type: ElementType;
+    elementMode?: 'Static' | 'Dynamic';
     description?: string;
     pageId: string;
     locators: Locator[];
     overwriteElementId?: string;
   }) => {
-    // Only update if overwriteElementId is explicitly given OR if drawer is actively open with elementToEdit
-    const targetId = elementData.overwriteElementId || (isDrawerOpen && elementToEdit ? elementToEdit.id : null);
+    // Update if overwriteElementId is provided OR editing an existing element
+    const targetId = elementData.overwriteElementId || elementToEdit?.id || null;
     if (targetId) {
       const res = await api.repository.updateElement(targetId, project.id, elementData);
       if (res.success && res.element) {
@@ -262,6 +338,7 @@ export const RepositoryView: React.FC<RepositoryViewProps> = ({ project }) => {
     const pageElems = getPageElements(page.id);
     const isExpanded = expandedPageIds instanceof Set ? expandedPageIds.has(page.id) : false;
     const isSelected = selectedPageId === page.id;
+    const isAiPage = page.name?.toLowerCase() === 'ai elements';
 
     return (
       <div key={page.id} className="select-none">
@@ -269,7 +346,7 @@ export const RepositoryView: React.FC<RepositoryViewProps> = ({ project }) => {
           onClick={() => setSelectedPageId(page.id)}
           className={`group flex items-center justify-between py-1.5 px-2 rounded-xl text-xs font-medium cursor-pointer transition-colors ${
             isSelected
-              ? 'bg-brand-600/15 text-brand-300 border border-brand-500/30 font-semibold'
+              ? isAiPage ? 'bg-purple-600/15 text-purple-200 border border-purple-500/30 font-semibold' : 'bg-brand-600/15 text-brand-300 border border-brand-500/30 font-semibold'
               : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
           }`}
           style={{ paddingLeft: `${depth * 14 + 8}px` }}
@@ -290,14 +367,24 @@ export const RepositoryView: React.FC<RepositoryViewProps> = ({ project }) => {
               <span className="w-4" />
             )}
 
-            <Folder className={`w-3.5 h-3.5 shrink-0 ${isSelected ? 'text-brand-400' : 'text-slate-500'}`} />
-            <span className="truncate">{page.name || 'Unnamed Page'}</span>
+            {isAiPage ? (
+              <Sparkles className="w-3.5 h-3.5 shrink-0 text-purple-400" />
+            ) : (
+              <Folder className={`w-3.5 h-3.5 shrink-0 ${isSelected ? 'text-brand-400' : 'text-slate-500'}`} />
+            )}
+            <span className={`truncate ${isAiPage ? 'text-purple-300 font-semibold' : ''}`}>{page.name || 'Unnamed Page'}</span>
+            {pageElems.length > 0 && (
+              <span className={`text-[9px] px-1.5 py-0.2 rounded-full font-mono border ml-1 ${
+                isAiPage
+                  ? 'bg-purple-500/20 text-purple-300 border-purple-500/30 font-semibold'
+                  : 'bg-slate-900 text-slate-400 border-slate-800'
+              }`}>
+                {pageElems.length}
+              </span>
+            )}
           </div>
 
           <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-            <span className="text-[10px] bg-slate-900 border border-slate-800 px-1.5 py-0.2 rounded-full text-slate-400 font-mono">
-              {pageElems.length}
-            </span>
             <button
               type="button"
               onClick={(e) => {
@@ -473,20 +560,64 @@ export const RepositoryView: React.FC<RepositoryViewProps> = ({ project }) => {
               </p>
             </div>
 
-            {/* Filter Search Input */}
-            <div className="relative w-full sm:w-64">
-              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
-                <Search className="w-3.5 h-3.5" />
+            {/* Filter Search Input & Select All */}
+            <div className="flex items-center gap-3 w-full sm:w-auto">
+              {filteredElements.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={filteredElements.length > 0 && selectedElementIds.size === filteredElements.length}
+                    onChange={handleToggleSelectAllElements}
+                    className="w-4 h-4 rounded bg-slate-950 border-slate-700 text-brand-600 focus:ring-0 cursor-pointer"
+                    title={selectedElementIds.size === filteredElements.length ? 'Deselect All' : 'Select All'}
+                  />
+                  <span className="text-xs text-slate-400 hidden md:inline">Select All</span>
+                </div>
+              )}
+              <div className="relative w-full sm:w-64">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
+                  <Search className="w-3.5 h-3.5" />
+                </div>
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Filter elements or locators..."
+                  className="w-full pl-8 pr-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs placeholder:text-slate-500 focus:outline-none focus:border-brand-500"
+                />
               </div>
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Filter elements or locators..."
-                className="w-full pl-8 pr-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs placeholder:text-slate-500 focus:outline-none focus:border-brand-500"
-              />
             </div>
           </div>
+
+          {/* Bulk Action Toolbar */}
+          {selectedElementIds.size > 0 && (
+            <div className="mx-6 mt-4 p-3 rounded-xl bg-brand-950/40 border border-brand-500/30 flex items-center justify-between gap-3 shadow-lg animate-fadeIn">
+              <div className="flex items-center gap-2 text-xs font-semibold text-brand-300">
+                <CheckCircle2 className="w-4 h-4 text-brand-400" />
+                <span>{selectedElementIds.size} Elements Selected</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleBulkDeleteElements}
+                  disabled={isBulkDeleting}
+                  className="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors disabled:opacity-50 shadow-sm"
+                  title="Delete selected repository elements"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Delete Selected Elements</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedElementIds(new Set())}
+                  className="p-1.5 text-slate-400 hover:text-white rounded-lg transition-colors"
+                  title="Deselect All"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Elements List */}
           <div className="flex-1 overflow-y-auto p-6 space-y-4">
@@ -541,31 +672,64 @@ export const RepositoryView: React.FC<RepositoryViewProps> = ({ project }) => {
                 if (!el) return null;
                 const locators = Array.isArray(el.locators) ? el.locators : [];
                 const primaryLocator = locators.find(l => l && l.isPrimary) || locators[0] || null;
-                const hasDynamic = locators.some(l => l && (l.valueType === 'Dynamic' || /\{[^}]+\}/.test(l.value || '')));
+                const hasDynamic = locators.some(l => l && l.valueType === 'Dynamic');
+                const isChecked = selectedElementIds.has(el.id);
 
                 return (
                   <div
                     key={el.id}
-                    className="bg-slate-950/80 border border-slate-800/90 hover:border-slate-700 rounded-xl p-4.5 transition-all shadow-sm space-y-3"
+                    className={`bg-slate-950/80 border rounded-xl p-4.5 transition-all shadow-sm space-y-3 ${
+                      isChecked
+                        ? 'border-brand-500/50 bg-brand-950/20 shadow-brand-500/5'
+                        : 'border-slate-800/90 hover:border-slate-700'
+                    }`}
                   >
                     {/* Element Card Top Row */}
                     <div className="flex items-start justify-between gap-4">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <h4 className="text-sm font-bold text-white tracking-tight">{el.name || 'Unnamed Element'}</h4>
-                          <span className="text-[10px] font-semibold text-brand-400 bg-brand-500/10 border border-brand-500/20 px-2 py-0.5 rounded-full">
-                            {el.type || 'Custom'}
-                          </span>
-                          {hasDynamic && (
-                            <span className="text-[10px] font-semibold text-purple-400 bg-purple-500/10 border border-purple-500/20 px-2 py-0.5 rounded-full flex items-center gap-1">
-                              <Sparkles className="w-2.5 h-2.5" />
-                              Dynamic Placeholders
+                      <div className="flex items-start gap-2.5">
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={e => handleToggleSelectElement(el.id, e)}
+                          onClick={e => e.stopPropagation()}
+                          className="w-4 h-4 rounded bg-slate-950 border-slate-700 text-brand-600 focus:ring-0 cursor-pointer shrink-0 mt-0.5"
+                        />
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h4 className="text-sm font-bold text-white tracking-tight">{el.name || 'Unnamed Element'}</h4>
+                            {(selectedPage?.name.toLowerCase() === 'ai elements' || el.description?.toLowerCase().includes('ai')) && (
+                              <span className="text-[10px] font-semibold text-purple-300 bg-purple-500/20 border border-purple-500/30 px-2 py-0.5 rounded-full flex items-center gap-1">
+                                <Sparkles className="w-3 h-3 text-purple-400" />
+                                AI Captured
+                              </span>
+                            )}
+                            <span className="text-[10px] font-semibold text-brand-400 bg-brand-500/10 border border-brand-500/20 px-2 py-0.5 rounded-full">
+                              {el.type || 'Custom'}
                             </span>
+                            <span
+                              className={`text-[10px] font-semibold px-2 py-0.5 rounded-full flex items-center gap-1 border ${
+                                el.elementMode === 'Dynamic'
+                                  ? 'text-purple-400 bg-purple-500/10 border-purple-500/30'
+                                  : 'text-slate-400 bg-slate-800/80 border-slate-700'
+                              }`}
+                            >
+                              {el.elementMode === 'Dynamic' ? (
+                                <>
+                                  <Sparkles className="w-2.5 h-2.5" />
+                                  Dynamic
+                                </>
+                              ) : (
+                                'Static'
+                              )}
+                            </span>
+                            <span className="text-[10px] font-mono text-slate-500 bg-slate-900 border border-slate-800 px-1.5 py-0.2 rounded">
+                              v{el.version || 1}
+                            </span>
+                          </div>
+                          {el.description && (
+                            <p className="text-xs text-slate-400 mt-0.5">{el.description}</p>
                           )}
                         </div>
-                        {el.description && (
-                          <p className="text-xs text-slate-400 mt-0.5">{el.description}</p>
-                        )}
                       </div>
 
                       <div className="flex items-center gap-1.5">
@@ -609,7 +773,10 @@ export const RepositoryView: React.FC<RepositoryViewProps> = ({ project }) => {
                     {/* Other Configured Locators preview if multiple */}
                     {locators.length > 1 && (
                       <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400 pt-1">
-                        <span className="text-slate-500">Other Locators ({locators.length - 1}):</span>
+                        <span className="text-amber-400 font-semibold flex items-center gap-1">
+                          <Zap className="w-3 h-3 text-amber-400" />
+                          Auto-Prioritization ({locators.length}):
+                        </span>
                         {locators
                           .filter(l => l && !l.isPrimary && l.id !== primaryLocator?.id)
                           .map((l, i) => {
@@ -617,9 +784,9 @@ export const RepositoryView: React.FC<RepositoryViewProps> = ({ project }) => {
                             return (
                               <span
                                 key={l.id || i}
-                                className="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 font-mono text-[10px]"
+                                className="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 font-mono text-[10px] text-slate-300"
                               >
-                                <strong>{l.type || 'Locator'}:</strong> {val.slice(0, 32)}
+                                <strong className="text-purple-300">#{l.priority || i + 2} {l.type || 'Locator'}:</strong> {val.slice(0, 32)}
                                 {val.length > 32 ? '...' : ''}
                               </span>
                             );
@@ -771,10 +938,10 @@ export const RepositoryView: React.FC<RepositoryViewProps> = ({ project }) => {
         </div>
       )}
 
-      {/* Delete Confirmation Dialog */}
+      {/* Delete Confirmation Dialog with Dependency Protection (Section 8.1) */}
       {itemToDelete && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fadeIn">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-sm p-6 shadow-2xl space-y-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md p-6 shadow-2xl space-y-4">
             <div className="w-10 h-10 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 flex items-center justify-center">
               <Trash2 className="w-5 h-5" />
             </div>
@@ -790,20 +957,55 @@ export const RepositoryView: React.FC<RepositoryViewProps> = ({ project }) => {
                   </span>
                 )}
               </p>
+
+              {deleteDependencyWarning && (
+                <div className="mt-3 p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-amber-300 text-xs space-y-1.5 animate-fadeIn">
+                  <div className="font-semibold flex items-center gap-1.5 text-amber-400">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span>Active Script Dependencies Found</span>
+                  </div>
+                  <p className="text-[11px] text-amber-200/80">
+                    This element is currently referenced by {deleteDependencyWarning.dependentScripts.length} script(s):
+                  </p>
+                  <ul className="list-disc pl-5 text-[11px] space-y-0.5 text-amber-200/90 font-mono">
+                    {deleteDependencyWarning.dependentScripts.map(d => (
+                      <li key={d.id}>
+                        {d.name} (Step{d.stepNumbers.length > 1 ? 's' : ''}: {d.stepNumbers.join(', ')})
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="text-[10px] text-amber-400/90 font-sans pt-1">
+                    Deleting this element will archive references without deleting your scripts.
+                  </p>
+                </div>
+              )}
             </div>
+
             <div className="flex items-center justify-end space-x-3 pt-2">
               <button
-                onClick={() => setItemToDelete(null)}
+                onClick={() => {
+                  setItemToDelete(null);
+                  setDeleteDependencyWarning(null);
+                }}
                 className="px-3.5 py-1.5 text-xs text-slate-400 hover:text-white rounded-lg transition-colors"
               >
                 Cancel
               </button>
-              <button
-                onClick={handleConfirmDelete}
-                className="px-4 py-1.5 text-xs font-semibold bg-rose-600 hover:bg-rose-500 text-white rounded-lg transition-colors"
-              >
-                Delete
-              </button>
+              {deleteDependencyWarning ? (
+                <button
+                  onClick={() => handleConfirmDelete(true)}
+                  className="px-4 py-1.5 text-xs font-semibold bg-rose-600 hover:bg-rose-500 text-white rounded-lg transition-colors shadow-sm"
+                >
+                  Confirm Force Delete
+                </button>
+              ) : (
+                <button
+                  onClick={() => handleConfirmDelete(false)}
+                  className="px-4 py-1.5 text-xs font-semibold bg-rose-600 hover:bg-rose-500 text-white rounded-lg transition-colors"
+                >
+                  Delete
+                </button>
+              )}
             </div>
           </div>
         </div>

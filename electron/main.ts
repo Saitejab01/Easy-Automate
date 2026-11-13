@@ -1,12 +1,17 @@
-import { app, BrowserWindow, ipcMain, shell, screen } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, screen, dialog } from 'electron';
 import path from 'path';
 import { JsonDatabase } from './database';
 import { AutomationEngine } from './engine/automationEngine';
 import { evaluateLocatorStability } from './locatorEvaluator';
 import { finderSession } from './finderSession';
+import { AIModelService } from './ai/aiModelService';
+import { AIAutoTestingEngine } from './ai/aiAutoTestingEngine';
+import { DocumentParser } from './ai/documentParser';
 
 let mainWindow: BrowserWindow | null = null;
 const db = new JsonDatabase();
+const aiModelService = new AIModelService(db);
+const aiAutoTestingEngine = new AIAutoTestingEngine(db, aiModelService);
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -50,9 +55,11 @@ function createWindow() {
   mainWindow.on('closed', () => {
     mainWindow = null;
     finderSession.setMainWindow(null);
+    aiAutoTestingEngine.setMainWindow(null);
   });
 
   finderSession.setMainWindow(mainWindow);
+  aiAutoTestingEngine.setMainWindow(mainWindow);
 }
 
 // Window control handlers
@@ -212,9 +219,19 @@ ipcMain.handle('repository:getElements', async (_event, { projectId, pageId }: {
   }
 });
 
+ipcMain.handle('repository:checkDependencies', async (_event, { elementId, projectId }: { elementId: string; projectId: string }) => {
+  try {
+    const deps = db.checkElementDependencies(elementId, projectId);
+    return { success: true, ...deps };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to check element dependencies' };
+  }
+});
+
 ipcMain.handle('repository:createElement', async (_event, { projectId, pageId, data }: { projectId: string; pageId: string; data: any }) => {
   try {
     const element = db.createRepositoryElement(projectId, pageId, data);
+    mainWindow?.webContents.send('repository:elementChanged', { action: 'created', element, projectId });
     return { success: true, element };
   } catch (err: any) {
     return { success: false, error: err.message || 'Failed to create element' };
@@ -224,18 +241,35 @@ ipcMain.handle('repository:createElement', async (_event, { projectId, pageId, d
 ipcMain.handle('repository:updateElement', async (_event, { elementId, projectId, data }: { elementId: string; projectId: string; data: any }) => {
   try {
     const element = db.updateRepositoryElement(elementId, projectId, data);
+    mainWindow?.webContents.send('repository:elementChanged', { action: 'updated', element, projectId });
     return { success: true, element };
   } catch (err: any) {
     return { success: false, error: err.message || 'Failed to update element' };
   }
 });
 
-ipcMain.handle('repository:deleteElement', async (_event, { elementId, projectId }: { elementId: string; projectId: string }) => {
+ipcMain.handle('repository:deleteElement', async (_event, { elementId, projectId, force }: { elementId: string; projectId: string; force?: boolean }) => {
   try {
-    db.deleteRepositoryElement(elementId, projectId);
+    db.deleteRepositoryElement(elementId, projectId, force);
+    mainWindow?.webContents.send('repository:elementChanged', { action: 'deleted', elementId, projectId });
     return { success: true };
   } catch (err: any) {
-    return { success: false, error: err.message || 'Failed to delete element' };
+    const deps = db.checkElementDependencies(elementId, projectId);
+    return {
+      success: false,
+      error: err.message || 'Failed to delete element',
+      hasDependencies: deps.hasDependencies,
+      dependentScripts: deps.dependentScripts
+    };
+  }
+});
+
+ipcMain.handle('repository:getLearnedLocator', async (_event, { elementId }: { elementId: string }) => {
+  try {
+    const learned = db.getLearnedLocator(elementId);
+    return { success: true, learnedLocator: learned };
+  } catch (err: any) {
+    return { success: false, error: err.message };
   }
 });
 
@@ -289,6 +323,11 @@ ipcMain.handle('finder:getStatus', async () => {
 
 ipcMain.handle('finder:setCapturedSequence', async (_event, count: number) => {
   finderSession.setCapturedSequence(count);
+  return { success: true };
+});
+
+ipcMain.handle('finder:syncSessionElements', async (_event, elements: any[]) => {
+  finderSession.syncSessionElements(elements);
   return { success: true };
 });
 
@@ -464,12 +503,26 @@ ipcMain.handle('scripts:updateScript', async (_event, { scriptId, projectId, upd
   }
 });
 
-ipcMain.handle('scripts:deleteScript', async (_event, { scriptId, projectId }: { scriptId: string; projectId: string }) => {
+ipcMain.handle('scripts:deleteScript', async (_event, { scriptId, projectId, force }: { scriptId: string; projectId: string; force?: boolean }) => {
   try {
-    db.deleteScript(scriptId, projectId);
-    return { success: true };
+    const res = db.deleteScript(scriptId, projectId, force);
+    return res;
   } catch (err: any) {
-    return { success: false, error: err.message || 'Failed to delete script' };
+    return {
+      success: false,
+      error: err.message || 'Failed to delete script',
+      hasDependencies: err.hasDependencies,
+      dependentSuites: err.dependentSuites
+    };
+  }
+});
+
+ipcMain.handle('scripts:checkDependencies', async (_event, { scriptId, projectId }: { scriptId: string; projectId: string }) => {
+  try {
+    const res = db.checkScriptDependencies(scriptId, projectId);
+    return res;
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to check script dependencies' };
   }
 });
 
@@ -604,6 +657,15 @@ ipcMain.handle('execution:executeScript', async (_event, { projectId, scriptId, 
   }
 });
 
+ipcMain.handle('execution:deleteExecution', async (_event, { executionId, projectId }: { executionId: string; projectId: string }) => {
+  try {
+    const success = db.deleteDetailedExecution(executionId, projectId);
+    return { success };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to delete execution' };
+  }
+});
+
 // Excel Utility
 ipcMain.handle('excel:getData', async (_event, { projectId, fileName, sheetName, uniqueData }: { projectId: string; fileName: string; sheetName: string; uniqueData: string }) => {
   try {
@@ -620,6 +682,317 @@ ipcMain.handle('excel:writeData', async (_event, { projectId, fileName, sheetNam
     return { success: true };
   } catch (err: any) {
     return { success: false, error: err.message || 'Failed to write data to excel' };
+  }
+});
+
+// ================= AI Auto Testing IPC Handlers ================= //
+
+// Pick document file from system dialog
+ipcMain.handle('aiAutoTesting:selectFile', async () => {
+  if (!mainWindow) return { canceled: true };
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Select Application Document',
+    properties: ['openFile'],
+    filters: [
+      { name: 'Application Documents', extensions: ['pdf', 'docx', 'xlsx', 'xls', 'csv', 'txt', 'md'] },
+      { name: 'All Files', extensions: ['*'] }
+    ]
+  });
+  if (result.canceled || result.filePaths.length === 0) {
+    return { canceled: true };
+  }
+  return { canceled: false, filePath: result.filePaths[0] };
+});
+
+// AI Model Configuration
+ipcMain.handle('aiAutoTesting:getModels', async () => {
+  try {
+    const models = db.getAIModelConfigurations();
+    return { success: true, models };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('aiAutoTesting:saveModel', async (_event, config: any) => {
+  try {
+    const saved = db.saveAIModelConfiguration(config);
+    return { success: true, model: saved };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('aiAutoTesting:deleteModel', async (_event, { modelId }: { modelId: string }) => {
+  try {
+    const success = db.deleteAIModelConfiguration(modelId);
+    return { success };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('aiAutoTesting:setDefaultModel', async (_event, { modelId }: { modelId: string }) => {
+  try {
+    const success = db.setDefaultAIModelConfiguration(modelId);
+    return { success };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('aiAutoTesting:testModelConnection', async (_event, { modelId, config }: { modelId?: string; config?: any }) => {
+  try {
+    const target = modelId || config;
+    const result = await aiModelService.testConnection(target);
+    return { success: result.status === 'Connected', ...result };
+  } catch (err: any) {
+    return { success: false, error: err.message, status: 'Connection Failed', latencyMs: 0, availableModels: [] };
+  }
+});
+
+ipcMain.handle('aiAutoTesting:testModelPrompt', async (_event, { modelId, prompt }: { modelId: string; prompt: string }) => {
+  try {
+    const config = db.getRawAIModelConfigurationById(modelId);
+    if (!config) throw new Error('Model configuration not found');
+    const response = await aiModelService.testChatPrompt(config, prompt);
+    return { success: true, testOutput: response };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+// Document Management
+ipcMain.handle('aiAutoTesting:getDocuments', async (_event, { projectId }: { projectId: string }) => {
+  try {
+    const documents = db.getAIDocuments(projectId);
+    return { success: true, documents };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('aiAutoTesting:uploadDocument', async (_event, { projectId, filePath }: { projectId: string; filePath: string }) => {
+  try {
+    const extracted = await DocumentParser.parseFile(filePath);
+    const doc = db.saveAIDocument({
+      projectId,
+      fileName: extracted.fileName,
+      fileSize: extracted.fileSize,
+      fileType: extracted.fileType,
+      extractedContent: extracted.extractedContent,
+      detectedCategory: extracted.detectedCategory,
+      status: 'Processed',
+      metadata: {
+        wordCount: extracted.wordCount
+      }
+    });
+    return { success: true, document: doc };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('aiAutoTesting:updateDocumentCategory', async (_event, { documentId, projectId, userCategory }: { documentId: string; projectId: string; userCategory: any }) => {
+  try {
+    const doc = db.getAIDocumentById(documentId, projectId);
+    if (!doc) throw new Error('Document not found');
+    doc.userCategory = userCategory;
+    const saved = db.saveAIDocument(doc);
+    return { success: true, document: saved };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('aiAutoTesting:deleteDocument', async (_event, { documentId, projectId }: { documentId: string; projectId: string }) => {
+  try {
+    const success = db.deleteAIDocument(documentId, projectId);
+    return { success };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+// Test Case Generation & Review
+ipcMain.handle('aiAutoTesting:getTestCases', async (_event, { projectId }: { projectId: string }) => {
+  try {
+    const testCases = db.getAITestCases(projectId);
+    return { success: true, testCases };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('aiAutoTesting:extractTestCasesFromDoc', async (_event, { documentId, projectId }: { documentId: string; projectId: string }) => {
+  try {
+    const doc = db.getAIDocumentById(documentId, projectId);
+    if (!doc) throw new Error('Document not found');
+    const tc = await aiAutoTestingEngine.extractManualTestCasesFromDoc(doc, projectId);
+    return { success: true, testCase: tc };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('aiAutoTesting:generateTestCasesFromBRD', async (_event, { documentId, userPrompt, projectId }: { documentId: string; userPrompt: string; projectId: string }) => {
+  try {
+    const doc = db.getAIDocumentById(documentId, projectId);
+    if (!doc) throw new Error('Document not found');
+    const tc = await aiAutoTestingEngine.generateTestCasesFromBRD(doc, userPrompt, projectId);
+    return { success: true, testCase: tc };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('aiAutoTesting:saveTestCase', async (_event, tcData: any) => {
+  try {
+    const saved = db.saveAITestCase(tcData);
+    return { success: true, testCase: saved };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('aiAutoTesting:acceptTestCase', async (_event, { testCaseId, projectId }: { testCaseId: string; projectId: string }) => {
+  try {
+    const accepted = db.acceptAITestCase(testCaseId, projectId);
+    return { success: true, testCase: accepted };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('aiAutoTesting:deleteTestCase', async (_event, { testCaseId, projectId }: { testCaseId: string; projectId: string }) => {
+  try {
+    const success = db.deleteAITestCase(testCaseId, projectId);
+    return { success };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+// Automation Development & Execution
+ipcMain.handle('aiAutoTesting:getSessions', async (_event, { projectId }: { projectId: string }) => {
+  try {
+    const sessions = db.getAIAutomationSessions(projectId);
+    return { success: true, sessions };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('aiAutoTesting:startDevelopmentSession', async (_event, { testCaseId, projectId, customUrl }: { testCaseId: string; projectId: string; customUrl?: string }) => {
+  try {
+    const session = await aiAutoTestingEngine.startDevelopmentSession(testCaseId, projectId, customUrl);
+    return { success: true, session };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('aiAutoTesting:pauseSession', async () => {
+  try {
+    const success = aiAutoTestingEngine.pauseSession();
+    return { success };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('aiAutoTesting:resumeSession', async () => {
+  try {
+    const success = aiAutoTestingEngine.resumeSession();
+    return { success };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('aiAutoTesting:stopSession', async () => {
+  try {
+    const success = await aiAutoTestingEngine.stopSession();
+    return { success };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('aiAutoTesting:retryStep', async (_event, { sessionId, projectId, stepNumber }: { sessionId: string; projectId: string; stepNumber: number }) => {
+  try {
+    const success = await aiAutoTestingEngine.retryStep(sessionId, projectId, stepNumber);
+    return { success };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+// Push to TestDev
+ipcMain.handle('aiAutoTesting:pushToTestDev', async (_event, { sessionId, projectId, targetModuleId, scriptName, userId }: { sessionId: string; projectId: string; targetModuleId: string; scriptName: string; userId: string }) => {
+  try {
+    const result = await aiAutoTestingEngine.pushToTestDev(sessionId, projectId, targetModuleId, scriptName, userId);
+    return result;
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+// Save / Update AI Session (CRUD on generated script & steps)
+ipcMain.handle('aiAutoTesting:saveSession', async (_event, session: any) => {
+  try {
+    const saved = db.saveAIAutomationSession(session);
+    return { success: true, session: saved };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+// Delete AI Session
+ipcMain.handle('aiAutoTesting:deleteSession', async (_event, { sessionId, projectId }: { sessionId: string; projectId: string }) => {
+  try {
+    const ok = db.deleteAIAutomationSession(sessionId, projectId);
+    return { success: ok };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+// Model Usage Logs
+ipcMain.handle('aiAutoTesting:getUsageLogs', async (_event, { modelId }: { modelId?: string }) => {
+  try {
+    const data = db.getAIModelUsageLogs(modelId);
+    return { success: true, ...data };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+// Section 8: Element Fingerprints IPC Handlers
+ipcMain.handle('aiAutoTesting:getFingerprints', async (_event, { projectId }: { projectId?: string }) => {
+  try {
+    const fingerprints = db.getElementFingerprints(projectId);
+    return { success: true, fingerprints };
+  } catch (err: any) {
+    return { success: false, error: err.message, fingerprints: [] };
+  }
+});
+
+ipcMain.handle('aiAutoTesting:getFingerprint', async (_event, { elementId }: { elementId: string }) => {
+  try {
+    const fingerprint = db.getElementFingerprint(elementId);
+    return { success: true, fingerprint };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('aiAutoTesting:deleteFingerprint', async (_event, { elementId }: { elementId: string }) => {
+  try {
+    const ok = db.deleteElementFingerprint(elementId);
+    return { success: ok };
+  } catch (err: any) {
+    return { success: false, error: err.message };
   }
 });
 

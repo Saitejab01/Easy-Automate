@@ -9,7 +9,7 @@
     "build:electron": "tsc -p tsconfig.electron.json",
     "dev": "cross-env NODE_ENV=development concurrently -k \"vite\" \"wait-on tcp:5173 && node run-electron.js .\"",
     "build": "npm run build:renderer && npm run build:electron",
-    "test": "npm run build:electron && node test-stage1.js && node test-stage2.js && node test-stage3.js && node test-stage4-5.js && node test-finder-session.js",
+    "test": "npm run build:electron && cross-env SEED_DEMO_PROJECTS=true node test-stage1.js && cross-env SEED_DEMO_PROJECTS=true node test-stage2.js && cross-env SEED_DEMO_PROJECTS=true node test-stage3.js && cross-env SEED_DEMO_PROJECTS=true node test-stage4-5.js && cross-env SEED_DEMO_PROJECTS=true node test-finder-session.js && cross-env SEED_DEMO_PROJECTS=true node test-dynamic-elements-sync.js && node test-reflection-wait-accordion.js",
     "start": "node run-electron.js ."
   },
   "dependencies": {

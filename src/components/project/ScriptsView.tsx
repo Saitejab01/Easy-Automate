@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Code,
   Code2,
@@ -35,7 +35,9 @@ import {
   FileSpreadsheet,
   MousePointer,
   HelpCircle,
-  ExternalLink
+  ExternalLink,
+  Zap,
+  RefreshCw
 } from 'lucide-react';
 import { api } from '../../api/client';
 import { generatePlaywrightCode } from '../../utils/playwrightCodeGenerator';
@@ -53,48 +55,26 @@ import {
 } from '../../api/types';
 import { NLP_CATALOG, NLP_CATEGORIES } from '../../api/nlpCatalog';
 import { useAuth } from '../../context/AuthContext';
+import {
+  parseDynamicPlaceholders,
+  resolveDynamicPlaceholders
+} from '../../utils/dynamicPlaceholder';
 
-export const extractDynamicPlaceholders = (locator?: { value?: string; valueType?: string }): string[] => {
-  if (!locator || !locator.value) return [];
-  const matches = locator.value.match(/\{([^}]+)\}/g);
-  if (matches && matches.length > 0) {
-    const set = new Set<string>();
-    matches.forEach(m => {
-      const cleaned = m.slice(1, -1).trim();
-      if (cleaned) set.add(cleaned);
-    });
-    return Array.from(set);
-  }
-  if (locator.valueType === 'Dynamic') {
-    return ['dynamicValue'];
-  }
-  return [];
+export const extractDynamicPlaceholders = (
+  locator?: { value?: string; valueType?: string },
+  elementMode: 'Static' | 'Dynamic' = 'Static'
+): string[] => {
+  if (elementMode !== 'Dynamic' || !locator || !locator.value) return [];
+  return parseDynamicPlaceholders(locator.value);
 };
 
 export const getResolvedLocatorPreview = (
   locator?: { value?: string; valueType?: string },
-  dynamicValues?: Record<string, string>
+  dynamicValues?: Record<string, string>,
+  elementMode: 'Static' | 'Dynamic' = 'Static'
 ): string => {
   if (!locator || !locator.value) return '';
-  let preview = locator.value;
-  if (!dynamicValues || Object.keys(dynamicValues).length === 0) return preview;
-
-  for (const [k, v] of Object.entries(dynamicValues)) {
-    const cleanK = k.replace(/^\{|\}$/g, '').trim();
-    const replacement = v !== undefined && v !== '' ? v : `{${cleanK}}`;
-    preview = preview.split(`{${cleanK}}`).join(replacement);
-    preview = preview.split(`{${k}}`).join(replacement);
-  }
-
-  const remainingMatches = preview.match(/\{([^}]+)\}/g);
-  if (remainingMatches && Object.keys(dynamicValues).length === 1) {
-    const singleVal = Object.values(dynamicValues)[0];
-    if (singleVal) {
-      preview = preview.split(remainingMatches[0]).join(singleVal);
-    }
-  }
-
-  return preview;
+  return resolveDynamicPlaceholders(locator.value, elementMode, dynamicValues).resolvedValue;
 };
 
 interface ScriptsViewProps {
@@ -155,6 +135,7 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
   const [isElementPickerOpen, setIsElementPickerOpen] = useState(false);
   const [elementPickerStepId, setElementPickerStepId] = useState<string | null>(null);
   const [elementSearchQuery, setElementSearchQuery] = useState('');
+  const [elementPickerCategory, setElementPickerCategory] = useState<'All' | 'AI' | 'Repository'>('All');
 
   // Variables Drawer (Section 7)
   const [isVariablesModalOpen, setIsVariablesModalOpen] = useState(false);
@@ -188,8 +169,109 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
   const [isLoading, setIsLoading] = useState(true);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
 
+  // Accordion Step Management State (Single expanded step, default collapsed)
+  const [expandedStepId, setExpandedStepId] = useState<string | null>(null);
+  const [newlyAddedStepId, setNewlyAddedStepId] = useState<string | null>(null);
+  const [draftStep, setDraftStep] = useState<ScriptStep | null>(null);
+  const [originalStepBeforeEdit, setOriginalStepBeforeEdit] = useState<ScriptStep | null>(null);
+  const [stepValidationError, setStepValidationError] = useState<string | null>(null);
+  const [isSavingStep, setIsSavingStep] = useState(false);
+  const [dirtyConfirmModal, setDirtyConfirmModal] = useState<{
+    targetStepId: string | null;
+    onProceed: () => void;
+  } | null>(null);
+
+  // Script Deletion Confirmation & Dependency Protection State
+  const [scriptToDelete, setScriptToDelete] = useState<AutomationScript | null>(null);
+  const [deleteScriptDependencyWarning, setDeleteScriptDependencyWarning] = useState<Array<{ id: string; name: string }> | null>(null);
+  const [isDeletingScript, setIsDeletingScript] = useState(false);
+
+  // Multi-select & Bulk Delete State
+  const [selectedScriptIds, setSelectedScriptIds] = useState<Set<string>>(new Set());
+  const [isBulkDeletingScripts, setIsBulkDeletingScripts] = useState(false);
+
+  // Helper: Single source of truth for element mode from Repository (completely depending on valueType)
+  const getStepElementMode = (step: ScriptStep): 'Static' | 'Dynamic' => {
+    if (step.elementId) {
+      const repoElem = repoElements.find(e => e.id === step.elementId);
+      if (repoElem) {
+        const primary = repoElem.locators?.find(l => l.isPrimary) || repoElem.locators?.[0];
+        if (primary?.valueType) {
+          return primary.valueType;
+        }
+        if (repoElem.elementMode) {
+          return repoElem.elementMode;
+        }
+      }
+    }
+    if ((step.locator as any)?.valueType) {
+      return (step.locator as any).valueType;
+    }
+    return step.elementMode || 'Static';
+  };
+
+  // Helper: Concise summary for collapsed accordion view
+  const getStepSummary = (step: ScriptStep): string => {
+    const repoElem = repoElements.find(e => e.id === step.elementId);
+    const elemName = step.elementName || repoElem?.name;
+    const stepNumStr = String(step.stepNumber).padStart(2, '0');
+
+    if (step.nlpId === 'static_wait') {
+      const dur = step.parameters?.waitDuration || 1;
+      return `${stepNumStr}. Static Wait – ${dur} Second${Number(dur) === 1 ? '' : 's'}`;
+    }
+    if (step.nlpId === 'navigate_to_url') {
+      return `${stepNumStr}. Navigate To URL – ${step.parameters?.url || 'URL not set'}`;
+    }
+    if (step.nlpId === 'enter_text') {
+      const val = step.parameters?.text !== undefined ? step.parameters?.text : (step.parameters?.inputData || '');
+      return `${stepNumStr}. Enter Text "${val}" – ${elemName || 'Element not set'}`;
+    }
+    if (step.nlpCategory === 'Wait') {
+      const dur = step.parameters?.waitDuration;
+      const durText = dur ? ` – ${dur}s Timeout` : '';
+      return `${stepNumStr}. ${step.nlpName}${elemName ? ` – ${elemName}` : ''}${durText}`;
+    }
+    if (step.nlpCategory === 'Verification') {
+      const dur = step.parameters?.waitDuration;
+      const durText = dur ? ` (${dur}s max)` : '';
+      return `${stepNumStr}. ${step.nlpName}${elemName ? ` – ${elemName}` : ''}${durText}`;
+    }
+    if (elemName) {
+      return `${stepNumStr}. ${step.nlpName} – ${elemName}`;
+    }
+    return `${stepNumStr}. ${step.nlpName}`;
+  };
+
+  // Check if draft step has been modified
+  const isStepModified = useMemo(() => {
+    if (!draftStep || !originalStepBeforeEdit) return false;
+    return JSON.stringify(draftStep) !== JSON.stringify(originalStepBeforeEdit);
+  }, [draftStep, originalStepBeforeEdit]);
+
   useEffect(() => {
     loadAllData();
+    // Application-wide automatic synchronization (Section 8)
+    const unsub = api.repository.onElementChanged(async () => {
+      try {
+        const [elemRes, scrRes] = await Promise.all([
+          api.repository.getElements(project.id),
+          api.scripts.getScripts(project.id)
+        ]);
+        if (elemRes.success && elemRes.elements) {
+          setRepoElements(elemRes.elements);
+        }
+        if (scrRes.success && scrRes.scripts) {
+          setScripts(scrRes.scripts);
+          setActiveScript(prev => prev ? (scrRes.scripts.find((s: AutomationScript) => s.id === prev.id) || prev) : null);
+        }
+      } catch (err) {
+        console.error('Failed to auto-sync repository changes in scripts:', err);
+      }
+    });
+    return () => {
+      if (typeof unsub === 'function') unsub();
+    };
   }, [project.id]);
 
   const loadAllData = async () => {
@@ -206,7 +288,7 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
 
       if (modRes.success && modRes.modules) {
         setModules(modRes.modules);
-        const rootIds = new Set(modRes.modules.filter((m: ScriptModule) => !m.parentId).map((m: ScriptModule) => m.id));
+        const rootIds = new Set<string>((modRes.modules || []).filter((m: ScriptModule) => !m.parentId).map((m: ScriptModule) => String(m.id)));
         setExpandedModuleIds(rootIds);
         setSelectedModuleId(prev => {
           if (prev && modRes.modules.some((m: ScriptModule) => m.id === prev)) {
@@ -381,19 +463,139 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
     }
   };
 
-  const handleDeleteScript = async (script: AutomationScript, e?: React.MouseEvent) => {
+  // --- Delete Script with Modal & Suite Dependency Protection ---
+  const handleRequestDeleteScript = async (script: AutomationScript, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
-    if (!window.confirm(`Delete script "${script.name}"?`)) return;
+    setScriptToDelete(script);
+    setDeleteScriptDependencyWarning(null);
     try {
-      const res = await api.scripts.deleteScript(script.id, project.id);
+      const deps = await api.scripts.checkDependencies(script.id, project.id);
+      if (deps.hasDependencies && deps.dependentSuites && deps.dependentSuites.length > 0) {
+        setDeleteScriptDependencyWarning(deps.dependentSuites);
+      }
+    } catch (err) {
+      console.error('Failed to check script dependencies:', err);
+    }
+  };
+
+  const handleConfirmDeleteScript = async (force: boolean = false) => {
+    if (!scriptToDelete) return;
+    setIsDeletingScript(true);
+    try {
+      const res = await api.scripts.deleteScript(scriptToDelete.id, project.id, force);
       if (res.success) {
-        setScripts(prev => prev.filter(s => s.id !== script.id));
-        if (activeScript?.id === script.id) setActiveScript(null);
-        showSuccessBanner(`Script "${script.name}" deleted.`);
+        setScripts(prev => prev.filter(s => s.id !== scriptToDelete.id));
+        if (activeScript?.id === scriptToDelete.id) {
+          setActiveScript(null);
+        }
+        showSuccessBanner(`Script "${scriptToDelete.name}" deleted successfully.`);
+        setScriptToDelete(null);
+        setDeleteScriptDependencyWarning(null);
+      } else if (res.hasDependencies && res.dependentSuites) {
+        setDeleteScriptDependencyWarning(res.dependentSuites);
+      } else {
+        alert(res.error || 'Failed to delete script');
       }
     } catch (err: any) {
-      alert(err.message || 'Failed to delete script.');
+      alert(err.message || 'Failed to delete script');
+    } finally {
+      setIsDeletingScript(false);
     }
+  };
+
+  const handleToggleSelectScript = (scriptId: string, e: React.MouseEvent | React.ChangeEvent) => {
+    e.stopPropagation();
+    setSelectedScriptIds(prev => {
+      const next = new Set(prev);
+      if (next.has(scriptId)) next.delete(scriptId);
+      else next.add(scriptId);
+      return next;
+    });
+  };
+
+  const handleToggleSelectAllScripts = () => {
+    if (selectedScriptIds.size === filteredScripts.length) {
+      setSelectedScriptIds(new Set());
+    } else {
+      setSelectedScriptIds(new Set(filteredScripts.map(s => s.id)));
+    }
+  };
+
+  const handleBulkDeleteScripts = async () => {
+    if (selectedScriptIds.size === 0) return;
+    const count = selectedScriptIds.size;
+    if (!window.confirm(`Are you sure you want to delete ${count} selected script(s)? This will also remove them from any suites.`)) {
+      return;
+    }
+
+    setIsBulkDeletingScripts(true);
+    try {
+      for (const sId of Array.from(selectedScriptIds)) {
+        await api.scripts.deleteScript(sId, project.id, true);
+      }
+      setScripts(prev => prev.filter(s => !selectedScriptIds.has(s.id)));
+      if (activeScript && selectedScriptIds.has(activeScript.id)) {
+        setActiveScript(null);
+      }
+      showSuccessBanner(`Successfully deleted ${count} script(s).`);
+      setSelectedScriptIds(new Set());
+    } catch (err: any) {
+      alert(err.message || 'Error deleting scripts');
+    } finally {
+      setIsBulkDeletingScripts(false);
+    }
+  };
+
+  // --- Accordion Step Validation ---
+  const validateStep = (step: ScriptStep): string | null => {
+    const nlpDef = NLP_CATALOG.find(n => n.id === step.nlpId);
+    if (!nlpDef) return null;
+
+    if (nlpDef.requiresElement && !step.elementId && !step.locator?.value) {
+      return 'Element selection is mandatory for this step. Please select an element from the Repository.';
+    }
+
+    // Validate waitDuration for Wait and Verification NLPs
+    if (nlpDef.category === 'Wait' || nlpDef.category === 'Verification') {
+      const dur = step.parameters?.waitDuration;
+      if (dur === undefined || dur === '' || isNaN(Number(dur)) || Number(dur) <= 0) {
+        return 'Wait Duration is mandatory and must be a positive number greater than 0.';
+      }
+      if (Number(dur) > 300) {
+        return 'Wait Duration cannot exceed 300 seconds.';
+      }
+    }
+
+    for (const rp of nlpDef.requiredParams) {
+      if (rp.name === 'waitDuration') continue;
+      const val = step.parameters?.[rp.name];
+      if (val === undefined || val === null || String(val).trim() === '') {
+        return `"${rp.label}" is required.`;
+      }
+      if (rp.type === 'number') {
+        const num = Number(val);
+        if (isNaN(num)) return `"${rp.label}" must be a valid number.`;
+        if ((rp as any).validation?.min !== undefined && num < (rp as any).validation.min) {
+          return `"${rp.label}" must be at least ${(rp as any).validation.min}.`;
+        }
+        if ((rp as any).validation?.max !== undefined && num > (rp as any).validation.max) {
+          return `"${rp.label}" cannot exceed ${(rp as any).validation.max}.`;
+        }
+      }
+    }
+
+    const stepMode = getStepElementMode(step);
+    if (stepMode === 'Dynamic' && step.locator) {
+      const placeholders = extractDynamicPlaceholders(step.locator, 'Dynamic');
+      for (const ph of placeholders) {
+        const dv = step.parameters?.dynamicValues?.[ph];
+        if (dv === undefined || dv === null || String(dv).trim() === '') {
+          return `Dynamic placeholder "${ph}" requires a runtime value.`;
+        }
+      }
+    }
+
+    return null;
   };
 
   // --- Step Management & Add Step Actions (Section 3.3 & 3.4) ---
@@ -411,7 +613,7 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
     // Initial parameters with defaults or empty strings for required parameters
     const params: Record<string, any> = {};
     nlp.requiredParams.forEach(p => {
-      params[p.name] = p.defaultValue !== undefined ? p.defaultValue : '';
+      params[p.name] = p.defaultValue !== undefined ? p.defaultValue : (p.name === 'waitDuration' ? 5 : '');
     });
     nlp.optionalParams?.forEach(p => {
       if (p.defaultValue !== undefined) params[p.name] = p.defaultValue;
@@ -440,19 +642,163 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
         const newStepIndex = insertAfterStepNum !== undefined ? insertAfterStepNum : res.script.steps.length - 1;
         const targetStep = res.script.steps[newStepIndex];
 
-        // If NLP requires an element (Section 5), immediately prompt element selector
-        if (nlp.requiresElement && targetStep) {
-          setElementPickerStepId(targetStep.id);
-          setElementSearchQuery('');
-          setIsElementPickerOpen(true);
-        } else if (!nlp.requiresElement && nlp.requiredParams.length > 0 && targetStep) {
-          // If NLP requires parameters like URL, prompt configuration immediately!
-          setEditingStep(targetStep);
+        if (targetStep) {
+          // Auto-expand ONLY the new step with [Save Step] and [Cancel]
+          setExpandedStepId(targetStep.id);
+          setNewlyAddedStepId(targetStep.id);
+          setDraftStep(JSON.parse(JSON.stringify(targetStep)));
+          setOriginalStepBeforeEdit(JSON.parse(JSON.stringify(targetStep)));
+          setStepValidationError(null);
+
+          // If NLP requires an element, also prompt element picker immediately
+          if (nlp.requiresElement) {
+            setElementPickerStepId(targetStep.id);
+            setElementSearchQuery('');
+            setIsElementPickerOpen(true);
+          }
         }
-        showSuccessBanner(`Added step "${nlp.name}".`);
+        showSuccessBanner(`Added step "${nlp.name}". Configure parameters and click Save Step.`);
       }
     } catch (err: any) {
       alert(err.message || 'Failed to add step.');
+    }
+  };
+
+  // --- Accordion Step Expansion / Collapse Handlers ---
+  const handleStepClick = (step: ScriptStep) => {
+    if (expandedStepId === step.id) {
+      handleRequestCollapse();
+      return;
+    }
+
+    if (expandedStepId && isStepModified) {
+      setDirtyConfirmModal({
+        targetStepId: step.id,
+        onProceed: () => {
+          expandStep(step);
+        }
+      });
+      return;
+    }
+
+    expandStep(step);
+  };
+
+  const expandStep = (step: ScriptStep) => {
+    setExpandedStepId(step.id);
+    setNewlyAddedStepId(null);
+    setDraftStep(JSON.parse(JSON.stringify(step)));
+    setOriginalStepBeforeEdit(JSON.parse(JSON.stringify(step)));
+    setStepValidationError(null);
+  };
+
+  const handleRequestCollapse = () => {
+    if (isStepModified) {
+      setDirtyConfirmModal({
+        targetStepId: null,
+        onProceed: () => {
+          collapseStep();
+        }
+      });
+      return;
+    }
+    collapseStep();
+  };
+
+  const collapseStep = () => {
+    if (newlyAddedStepId) {
+      handleDeleteStep(newlyAddedStepId);
+      setNewlyAddedStepId(null);
+    }
+    setExpandedStepId(null);
+    setDraftStep(null);
+    setOriginalStepBeforeEdit(null);
+    setStepValidationError(null);
+  };
+
+  const handleDraftParamChange = (paramKey: string, val: any) => {
+    if (!draftStep) return;
+    setDraftStep({
+      ...draftStep,
+      parameters: {
+        ...(draftStep.parameters || {}),
+        [paramKey]: val
+      }
+    });
+    if (stepValidationError) setStepValidationError(null);
+  };
+
+  const handleDraftDynamicValueChange = (placeholder: string, val: string) => {
+    if (!draftStep) return;
+    const curDyn = { ...(draftStep.parameters?.dynamicValues || {}) };
+    curDyn[placeholder] = val;
+    setDraftStep({
+      ...draftStep,
+      parameters: {
+        ...(draftStep.parameters || {}),
+        dynamicValues: curDyn
+      }
+    });
+    if (stepValidationError) setStepValidationError(null);
+  };
+
+  const handleSaveStep = async (stepToSave: ScriptStep) => {
+    if (!activeScript) return;
+    const validationErr = validateStep(stepToSave);
+    if (validationErr) {
+      setStepValidationError(validationErr);
+      return;
+    }
+    setStepValidationError(null);
+    setIsSavingStep(true);
+
+    try {
+      const res = await api.scripts.updateStep(
+        activeScript.id,
+        project.id,
+        stepToSave.id,
+        {
+          parameters: stepToSave.parameters,
+          elementId: stepToSave.elementId,
+          elementName: stepToSave.elementName,
+          elementMode: stepToSave.elementMode,
+          elementVersion: stepToSave.elementVersion,
+          pageName: stepToSave.pageName,
+          locator: stepToSave.locator
+        }
+      );
+
+      if (res.success && res.script) {
+        setActiveScript(res.script);
+        setScripts(prev => prev.map(s => (s.id === res.script.id ? res.script : s)));
+        showSuccessBanner(`Step "${stepToSave.nlpName}" ${newlyAddedStepId === stepToSave.id ? 'saved' : 'updated'} successfully.`);
+        setExpandedStepId(null);
+        setNewlyAddedStepId(null);
+        setDraftStep(null);
+        setOriginalStepBeforeEdit(null);
+      } else {
+        setStepValidationError(res.error || 'Failed to save step.');
+      }
+    } catch (err: any) {
+      setStepValidationError(err.message || 'Error saving step.');
+    } finally {
+      setIsSavingStep(false);
+    }
+  };
+
+  const handleCancelStep = (stepId: string) => {
+    if (newlyAddedStepId === stepId) {
+      handleDeleteStep(stepId);
+      setNewlyAddedStepId(null);
+      setExpandedStepId(null);
+      setDraftStep(null);
+      setOriginalStepBeforeEdit(null);
+      setStepValidationError(null);
+    } else {
+      setExpandedStepId(null);
+      setDraftStep(null);
+      setOriginalStepBeforeEdit(null);
+      setStepValidationError(null);
     }
   };
 
@@ -587,8 +933,9 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
     const page = repoPages.find(p => p.id === element.pageId);
     const primaryLoc = element.locators.find(l => l.isPrimary) || element.locators[0];
     const targetStep = activeScript.steps.find(s => s.id === elementPickerStepId);
+    const elemMode: 'Static' | 'Dynamic' = primaryLoc?.valueType || element.elementMode || 'Static';
 
-    const placeholders = extractDynamicPlaceholders(primaryLoc);
+    const placeholders = extractDynamicPlaceholders(primaryLoc, elemMode);
     const updatedDynValues: Record<string, string> = { ...(targetStep?.parameters?.dynamicValues || {}) };
     placeholders.forEach(ph => {
       if (updatedDynValues[ph] === undefined) {
@@ -601,10 +948,25 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
       ...(placeholders.length > 0 ? { dynamicValues: updatedDynValues } : {})
     };
 
+    if (draftStep && draftStep.id === elementPickerStepId) {
+      setDraftStep({
+        ...draftStep,
+        elementId: element.id,
+        elementName: element.name,
+        elementMode: elemMode,
+        elementVersion: element.version || 1,
+        pageName: page?.name || 'Repository Page',
+        locator: primaryLoc,
+        parameters: updatedParams
+      });
+    }
+
     try {
       const res = await api.scripts.updateStep(activeScript.id, project.id, elementPickerStepId, {
         elementId: element.id,
         elementName: element.name,
+        elementMode: elemMode,
+        elementVersion: element.version || 1,
         pageName: page?.name || 'Repository Page',
         locator: primaryLoc,
         parameters: updatedParams
@@ -802,6 +1164,21 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
             No variables matching <span className="text-amber-400 font-mono font-bold">&quot;${query}&quot;</span> found in this project.
           </div>
         )}
+
+        <div className="p-1.5 border-t border-slate-800 bg-slate-950/40">
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => {
+              setIsVariablesModalOpen(true);
+              setVarAutoComplete(null);
+            }}
+            className="w-full px-2.5 py-1.5 rounded-lg bg-brand-600/20 hover:bg-brand-600/30 border border-brand-500/30 text-[11px] text-brand-300 font-semibold flex items-center justify-center gap-1.5 transition-all"
+          >
+            <Plus className="w-3.5 h-3.5 text-brand-400" />
+            <span>Manage / Add Variables</span>
+          </button>
+        </div>
       </div>
     );
   };
@@ -865,6 +1242,12 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
   });
 
   const filteredElements = repoElements.filter(el => {
+    const page = repoPages.find(p => p.id === el.pageId);
+    const isAiElement = page?.name.toLowerCase() === 'ai elements' || el.description?.toLowerCase().includes('ai');
+
+    if (elementPickerCategory === 'AI' && !isAiElement) return false;
+    if (elementPickerCategory === 'Repository' && isAiElement) return false;
+
     return el.name.toLowerCase().includes(elementSearchQuery.toLowerCase()) ||
       el.locators.some(l => l.value.toLowerCase().includes(elementSearchQuery.toLowerCase()));
   });
@@ -1139,7 +1522,19 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
             </h1>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
+            {filteredScripts.length > 0 && (
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={filteredScripts.length > 0 && selectedScriptIds.size === filteredScripts.length}
+                  onChange={handleToggleSelectAllScripts}
+                  className="w-4 h-4 rounded bg-slate-950 border-slate-700 text-brand-600 focus:ring-0 cursor-pointer"
+                  title={selectedScriptIds.size === filteredScripts.length ? 'Deselect All' : 'Select All'}
+                />
+                <span className="text-xs text-slate-400">Select All</span>
+              </div>
+            )}
             <button
               type="button"
               onClick={handleOpenCreateScript}
@@ -1150,6 +1545,36 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
             </button>
           </div>
         </header>
+
+        {/* Bulk Action Toolbar */}
+        {selectedScriptIds.size > 0 && (
+          <div className="mx-6 mt-4 p-3 rounded-xl bg-brand-950/40 border border-brand-500/30 flex items-center justify-between gap-3 shadow-lg animate-fadeIn">
+            <div className="flex items-center gap-2 text-xs font-semibold text-brand-300">
+              <CheckCircle2 className="w-4 h-4 text-brand-400" />
+              <span>{selectedScriptIds.size} Scripts Selected</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleBulkDeleteScripts}
+                disabled={isBulkDeletingScripts}
+                className="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors disabled:opacity-50 shadow-sm"
+                title="Delete selected scripts"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Delete Selected Scripts</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedScriptIds(new Set())}
+                className="p-1.5 text-slate-400 hover:text-white rounded-lg transition-colors"
+                title="Deselect All"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Scripts Grid */}
         <div className="flex-1 overflow-y-auto p-6 space-y-4">
@@ -1191,33 +1616,57 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
               {filteredScripts.map(script => {
                 const parentModule = modules.find(m => m.id === script.moduleId);
+                const isChecked = selectedScriptIds.has(script.id);
 
                 return (
                   <div
                     key={script.id}
                     onClick={() => setActiveScript(script)}
-                    className="p-5 rounded-2xl bg-slate-900/80 border border-slate-800 hover:border-brand-500/50 cursor-pointer transition-all shadow-md group flex flex-col justify-between"
+                    className={`p-5 rounded-2xl border cursor-pointer transition-all shadow-md group flex flex-col justify-between ${
+                      isChecked
+                        ? 'bg-brand-950/20 border-brand-500/50 shadow-brand-500/5'
+                        : 'bg-slate-900/80 border-slate-800 hover:border-brand-500/50'
+                    }`}
                   >
                     <div>
                       <div className="flex items-start justify-between gap-3 mb-2">
-                        <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700">
-                          {script.id}
-                        </span>
-                        {script.lastExecutionStatus ? (
-                          <span
-                            className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
-                              script.lastExecutionStatus === 'Passed'
-                                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                                : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
-                            }`}
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={e => handleToggleSelectScript(script.id, e)}
+                            onClick={e => e.stopPropagation()}
+                            className="w-3.5 h-3.5 rounded bg-slate-950 border-slate-700 text-brand-600 focus:ring-0 cursor-pointer shrink-0"
+                          />
+                          <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700">
+                            {script.id}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          {script.lastExecutionStatus ? (
+                            <span
+                              className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
+                                script.lastExecutionStatus === 'Passed'
+                                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                                  : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+                              }`}
+                            >
+                              {script.lastExecutionStatus}
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-slate-400">
+                              Draft
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={(e) => handleRequestDeleteScript(script, e)}
+                            className="p-1 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors opacity-0 group-hover:opacity-100"
+                            title="Delete Script"
                           >
-                            {script.lastExecutionStatus}
-                          </span>
-                        ) : (
-                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-slate-400">
-                            Draft
-                          </span>
-                        )}
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
 
                       <h3 className="text-sm font-bold text-white group-hover:text-brand-300 transition-colors">
@@ -1334,6 +1783,15 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
 
               <button
                 type="button"
+                onClick={() => handleRequestDeleteScript(activeScript)}
+                className="p-2 rounded-xl bg-slate-800 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 border border-slate-700 hover:border-rose-500/40 transition-all"
+                title="Delete Script"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+
+              <button
+                type="button"
                 onClick={() => setActiveScript(null)}
                 className="p-1.5 text-slate-400 hover:text-slate-200 ml-2"
               >
@@ -1381,338 +1839,534 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
               </div>
             ) : (
               activeScript.steps.map((step, index) => {
-                const stepHasElement = step.elementId || step.elementName;
+                const isExpanded = expandedStepId === step.id;
+                const activeEditingStep = isExpanded ? (draftStep || step) : step;
+                const stepMode = getStepElementMode(activeEditingStep);
+                const nlpDef = NLP_CATALOG.find(n => n.id === activeEditingStep.nlpId);
+                const stepHasElement = !!(activeEditingStep.elementId || activeEditingStep.elementName);
 
                 return (
                   <div key={step.id} className="relative group/step">
-                    {/* Step Card */}
-                    <div className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800 hover:border-slate-700 transition-all flex items-start justify-between gap-4 shadow-sm">
-                      <div className="flex items-start gap-3.5 flex-1 min-w-0">
-                        {/* Step Number Badge */}
-                        <div className="w-7 h-7 rounded-xl bg-slate-800 border border-slate-700 text-brand-300 font-mono text-xs font-bold flex items-center justify-center shrink-0">
-                          {step.stepNumber}
+                    {!isExpanded ? (
+                      /* Collapsed Step Row (Default View, Section 4) */
+                      <div
+                        onClick={() => handleStepClick(step)}
+                        className="p-3.5 rounded-2xl bg-slate-900/90 border border-slate-800 hover:border-slate-700 cursor-pointer transition-all flex items-center justify-between gap-4 shadow-sm group/row"
+                      >
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          <div className="w-7 h-7 rounded-xl bg-slate-800 border border-slate-700 text-brand-300 font-mono text-xs font-bold flex items-center justify-center shrink-0">
+                            {String(step.stepNumber).padStart(2, '0')}
+                          </div>
+                          <ChevronRight className="w-4 h-4 text-slate-500 group-hover/row:text-slate-300 transition-transform shrink-0" />
+                          <span className="text-[10px] font-semibold uppercase tracking-wider text-brand-400 bg-brand-500/10 border border-brand-500/20 px-2 py-0.5 rounded-full shrink-0">
+                            {step.nlpCategory}
+                          </span>
+                          <span className="text-xs font-bold text-white truncate font-sans">
+                            {getStepSummary(step)}
+                          </span>
+                          {stepHasElement && (
+                            <span
+                              className={`text-[9px] font-semibold px-2 py-0.5 rounded-full uppercase tracking-wider border shrink-0 ${
+                                stepMode === 'Dynamic'
+                                  ? 'text-purple-400 bg-purple-500/15 border-purple-500/40'
+                                  : 'text-slate-400 bg-slate-800 border-slate-700'
+                              }`}
+                            >
+                              {stepMode}
+                            </span>
+                          )}
                         </div>
 
-                        <div className="space-y-1.5 flex-1 min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-[10px] font-semibold uppercase tracking-wider text-brand-400 bg-brand-500/10 border border-brand-500/20 px-2 py-0.5 rounded-full">
-                              {step.nlpCategory}
+                        {/* Collapsed Actions: Move Up, Move Down, Duplicate, Edit, Delete */}
+                        <div className="flex items-center gap-1 shrink-0" onClick={e => e.stopPropagation()}>
+                          <button
+                            type="button"
+                            onClick={() => handleMoveStep(index, 'up')}
+                            disabled={index === 0}
+                            className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white disabled:opacity-30"
+                            title="Move Up"
+                          >
+                            <ArrowUp className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleMoveStep(index, 'down')}
+                            disabled={index === activeScript.steps.length - 1}
+                            className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white disabled:opacity-30"
+                            title="Move Down"
+                          >
+                            <ArrowDown className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDuplicateStep(step.id)}
+                            className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white"
+                            title="Duplicate Step"
+                          >
+                            <Copy className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleStepClick(step)}
+                            className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-brand-300"
+                            title="Configure Step"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteStep(step.id)}
+                            className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-rose-400"
+                            title="Delete Step"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      /* Expanded Step Card (Single-Step Accordion View, Section 4) */
+                      <div className="rounded-2xl bg-slate-900 border-2 border-brand-500/40 shadow-xl overflow-hidden animate-fadeIn">
+                        {/* Expanded Header */}
+                        <div
+                          onClick={handleRequestCollapse}
+                          className="p-4 bg-slate-950/60 border-b border-slate-800 flex items-center justify-between gap-4 cursor-pointer"
+                        >
+                          <div className="flex items-center gap-3 min-w-0 flex-1">
+                            <div className="w-7 h-7 rounded-xl bg-brand-600 text-white font-mono text-xs font-bold flex items-center justify-center shrink-0">
+                              {String(step.stepNumber).padStart(2, '0')}
+                            </div>
+                            <ChevronDown className="w-4 h-4 text-brand-400 shrink-0" />
+                            <span className="text-[10px] font-semibold uppercase tracking-wider text-brand-400 bg-brand-500/10 border border-brand-500/20 px-2 py-0.5 rounded-full shrink-0">
+                              {activeEditingStep.nlpCategory}
                             </span>
-                            <span className="text-xs font-bold text-white truncate">
-                              {step.nlpName}
+                            <span className="text-sm font-bold text-white truncate font-sans">
+                              {activeEditingStep.nlpName}
                             </span>
+                            {newlyAddedStepId === step.id && (
+                              <span className="text-[10px] font-semibold text-emerald-400 bg-emerald-500/15 border border-emerald-500/40 px-2 py-0.5 rounded-full animate-pulse shrink-0">
+                                New Step
+                              </span>
+                            )}
                           </div>
 
-                          <p className="text-xs text-slate-400 leading-relaxed">
-                            {step.description}
+                          <div className="flex items-center gap-1 shrink-0" onClick={e => e.stopPropagation()}>
+                            <button
+                              type="button"
+                              onClick={() => handleMoveStep(index, 'up')}
+                              disabled={index === 0}
+                              className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white disabled:opacity-30"
+                              title="Move Up"
+                            >
+                              <ArrowUp className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleMoveStep(index, 'down')}
+                              disabled={index === activeScript.steps.length - 1}
+                              className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white disabled:opacity-30"
+                              title="Move Down"
+                            >
+                              <ArrowDown className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDuplicateStep(step.id)}
+                              className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white"
+                              title="Duplicate Step"
+                            >
+                              <Copy className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteStep(step.id)}
+                              className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-rose-400"
+                              title="Delete Step"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Expanded Body */}
+                        <div className="p-6 space-y-5 text-xs">
+                          <p className="text-slate-400 leading-relaxed text-xs">
+                            {activeEditingStep.description}
                           </p>
 
-                          {/* Element Mapping Pill (Section 5) */}
-                          {stepHasElement ? (
-                            <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 text-[11px] text-slate-300 font-mono">
-                              <MousePointer className="w-3 h-3 text-purple-400" />
-                              <span className="text-purple-300 font-semibold">{step.elementName}</span>
-                              <span className="text-slate-600">|</span>
-                              <span className="text-slate-400 truncate max-w-xs">{step.locator?.value || 'Mapped'}</span>
-                              {step.locator && (step.locator.valueType === 'Dynamic' || /\{[^}]+\}/.test(step.locator.value || '')) && (
-                                <span className="text-[9px] font-semibold text-purple-400 bg-purple-500/15 border border-purple-500/40 px-1.5 py-0.5 rounded-full uppercase tracking-wider">
-                                  Dynamic
+                          {/* Element Mapping Section */}
+                          {nlpDef?.requiresElement && (
+                            <div className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 space-y-3">
+                              <div className="flex items-center justify-between">
+                                <span className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+                                  <MousePointer className="w-3.5 h-3.5 text-purple-400" />
+                                  Target Element (Repository)
                                 </span>
-                              )}
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setElementPickerStepId(step.id);
-                                  setElementSearchQuery('');
-                                  setIsElementPickerOpen(true);
-                                }}
-                                className="text-brand-400 hover:text-brand-300 underline text-[10px] ml-1"
-                              >
-                                Change
-                              </button>
-                            </div>
-                          ) : (
-                            NLP_CATALOG.find(n => n.id === step.nlpId)?.requiresElement && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setElementPickerStepId(step.id);
-                                  setElementSearchQuery('');
-                                  setIsElementPickerOpen(true);
-                                }}
-                                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-[11px] font-medium"
-                              >
-                                <AlertCircle className="w-3 h-3 text-rose-400" />
-                                <span>Element not mapped. Click to select from Repository</span>
-                              </button>
-                            )
-                          )}
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setElementPickerStepId(activeEditingStep.id);
+                                      setElementSearchQuery('');
+                                      setElementPickerCategory('AI');
+                                      setIsElementPickerOpen(true);
+                                    }}
+                                    className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/30 transition-all flex items-center gap-1.5"
+                                    title="Explicitly assign an element captured by AI Auto Testing"
+                                  >
+                                    <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+                                    <span>Assign AI Element</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setElementPickerStepId(activeEditingStep.id);
+                                      setElementSearchQuery('');
+                                      setElementPickerCategory('All');
+                                      setIsElementPickerOpen(true);
+                                    }}
+                                    className="px-3 py-1 text-xs font-semibold rounded-lg bg-brand-600/20 hover:bg-brand-600/30 text-brand-300 border border-brand-500/30 transition-all"
+                                  >
+                                    {stepHasElement ? 'Change Element' : 'Select Element'}
+                                  </button>
+                                </div>
+                              </div>
 
-                          {/* Dynamic Locator Inputs (When Dynamic Element is mapped) */}
-                          {stepHasElement && (() => {
-                            const placeholders = extractDynamicPlaceholders(step.locator);
-                            if (placeholders.length === 0) return null;
+                              {stepHasElement ? (
+                                <div className="space-y-2">
+                                  {(() => {
+                                    const assignedElem = repoElements.find(e => e.id === activeEditingStep.elementId);
+                                    const isAiPage = activeEditingStep.pageName?.toLowerCase().includes('ai') || assignedElem?.description?.toLowerCase().includes('ai');
 
-                            return (
-                              <div className="space-y-2 pt-2">
-                                {placeholders.map(ph => {
-                                  const inputId = `step_${step.id}_dyn_${ph}`;
-                                  const rawValue = step.parameters?.dynamicValues?.[ph] || '';
-                                  const preview = getResolvedLocatorPreview(step.locator, step.parameters?.dynamicValues);
-
-                                  return (
-                                    <div
-                                      key={ph}
-                                      className="p-3 rounded-xl bg-purple-950/20 border border-purple-500/30 max-w-2xl space-y-2 shadow-sm"
-                                    >
-                                      <div className="flex items-center justify-between gap-2">
-                                        <label className="text-[11px] font-semibold text-purple-300 flex items-center gap-1.5">
-                                          <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse"></span>
-                                          <span>Dynamic Value for</span>
-                                          <code className="text-purple-200 bg-purple-900/50 px-1.5 py-0.5 rounded font-mono border border-purple-500/30">
-                                            {`{${ph}}`}
-                                          </code>
-                                        </label>
-                                        {!rawValue ? (
-                                          <span className="text-[10px] font-medium text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 whitespace-nowrap">
-                                            Value Required
+                                    return (
+                                      <div className="space-y-1.5">
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                          <span className="text-sm font-bold text-white font-mono bg-slate-900 px-2.5 py-1 rounded-lg border border-slate-800">
+                                            {activeEditingStep.elementName}
                                           </span>
-                                        ) : (
-                                          <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
-                                            Ready
+                                          {isAiPage && (
+                                            <span className="text-[10px] font-semibold text-purple-300 bg-purple-500/20 border border-purple-500/30 px-2 py-0.5 rounded-full flex items-center gap-1">
+                                              <Sparkles className="w-3 h-3 text-purple-400" />
+                                              AI Captured
+                                            </span>
+                                          )}
+                                          <span
+                                            className={`text-[10px] font-semibold px-2 py-0.5 rounded-full uppercase tracking-wider border ${
+                                              stepMode === 'Dynamic'
+                                                ? 'text-purple-400 bg-purple-500/15 border-purple-500/40'
+                                                : 'text-slate-400 bg-slate-800 border-slate-700'
+                                            }`}
+                                          >
+                                            {stepMode}
                                           </span>
+                                          <span className="text-xs text-slate-400 font-mono truncate max-w-md">
+                                            {activeEditingStep.locator?.type}: {activeEditingStep.locator?.value}
+                                          </span>
+                                        </div>
+
+                                        {assignedElem && assignedElem.locators && assignedElem.locators.length > 1 && (
+                                          <div className="flex items-center gap-2 text-[11px] text-slate-400 bg-slate-950/80 p-2 rounded-lg border border-slate-800">
+                                            <span className="text-amber-400 font-semibold flex items-center gap-1">
+                                              <Zap className="w-3 h-3" />
+                                              Auto-Prioritization:
+                                            </span>
+                                            <span className="font-mono text-slate-300">
+                                              {[...assignedElem.locators]
+                                                .sort((a, b) => (a.priority || 1) - (b.priority || 1))
+                                                .map((l, i) => `#${l.priority || i + 1} ${l.type}`)
+                                                .join(' → ')}
+                                            </span>
+                                          </div>
                                         )}
                                       </div>
+                                    );
+                                  })()}
 
-                                      <div className="flex items-center gap-2">
-                                        <div className="relative flex-1">
-                                          <input
-                                            type="text"
-                                            placeholder={`Value to replace {${ph}} (or type $ for variables)`}
-                                            value={rawValue}
-                                            onChange={(e) =>
-                                              handleInputWithVarSuggestions(
-                                                inputId,
-                                                e.target.value,
-                                                (newV) => {
-                                                  handleDynamicValueChange(step.id, ph, newV);
-                                                  handleSaveDynamicValue(step.id, ph, newV);
-                                                }
-                                              )
-                                            }
-                                            onBlur={() => {
-                                              setTimeout(() => {
-                                                setVarAutoComplete(prev => prev?.inputId === inputId ? null : prev);
-                                              }, 200);
-                                              handleSaveDynamicValue(step.id, ph, step.parameters?.dynamicValues?.[ph] || '');
-                                            }}
-                                            className="w-full px-3 py-1.5 text-xs bg-slate-950 border border-purple-500/40 rounded-lg text-purple-200 placeholder:text-slate-600 focus:outline-none focus:border-purple-400 font-mono shadow-inner"
-                                          />
-                                          {renderVariableDropdown(inputId)}
+                                  {/* Dynamic Placeholders Input Fields (Dynamic Mode Only) */}
+                                  {stepMode === 'Dynamic' && activeEditingStep.locator && (() => {
+                                    const placeholders = extractDynamicPlaceholders(activeEditingStep.locator, 'Dynamic');
+                                    if (placeholders.length === 0) return null;
+
+                                    return (
+                                      <div className="mt-3 space-y-2.5 pt-2 border-t border-slate-800/80">
+                                        <div className="text-[11px] font-semibold text-purple-300 flex items-center gap-1.5">
+                                          <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+                                          Dynamic Placeholders Detected
                                         </div>
-                                      </div>
+                                        {placeholders.map(ph => {
+                                          const rawValue = activeEditingStep.parameters?.dynamicValues?.[ph] || '';
+                                          const preview = getResolvedLocatorPreview(activeEditingStep.locator, activeEditingStep.parameters?.dynamicValues, 'Dynamic');
 
-                                      {/* Live Preview of Resolved Locator */}
-                                      <div className="flex items-center gap-2 text-[11px] font-mono bg-slate-950/80 px-2.5 py-1 rounded-lg border border-slate-800/80 text-slate-400">
-                                        <span className="text-slate-500 shrink-0 text-[10px] uppercase font-sans font-bold">Resolved:</span>
-                                        <span className="text-purple-300 truncate" title={preview}>
-                                          {preview}
-                                        </span>
+                                          return (
+                                            <div key={ph} className="p-3 rounded-xl bg-purple-950/20 border border-purple-500/30 space-y-2">
+                                              <div className="flex items-center justify-between gap-2">
+                                                <label className="text-[11px] font-semibold text-purple-300 flex items-center gap-1.5">
+                                                  <span>Value for</span>
+                                                  <code className="text-purple-200 bg-purple-900/50 px-1.5 py-0.5 rounded font-mono border border-purple-500/30">
+                                                    {ph}
+                                                  </code>
+                                                </label>
+                                                {!rawValue ? (
+                                                  <span className="text-[10px] font-medium text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                                                    Value Required
+                                                  </span>
+                                                ) : (
+                                                  <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                                                    Ready
+                                                  </span>
+                                                )}
+                                              </div>
+                                              <div className="relative">
+                                                <input
+                                                  type="text"
+                                                  placeholder={`Value to replace ${ph} (or type $ for variables)`}
+                                                  value={rawValue}
+                                                  onChange={(e) =>
+                                                    handleInputWithVarSuggestions(
+                                                      `accordion_dyn_${activeEditingStep.id}_${ph}`,
+                                                      e.target.value,
+                                                      (newV) => handleDraftDynamicValueChange(ph, newV)
+                                                    )
+                                                  }
+                                                  onBlur={() => {
+                                                    setTimeout(() => {
+                                                      setVarAutoComplete(prev => prev?.inputId === `accordion_dyn_${activeEditingStep.id}_${ph}` ? null : prev);
+                                                    }, 200);
+                                                  }}
+                                                  className="w-full px-3 py-1.5 text-xs bg-slate-950 border border-purple-500/40 rounded-lg text-purple-200 placeholder:text-slate-600 focus:outline-none focus:border-purple-400 font-mono"
+                                                />
+                                                {renderVariableDropdown(`accordion_dyn_${activeEditingStep.id}_${ph}`)}
+                                              </div>
+                                              <div className="flex items-center gap-2 text-[11px] font-mono bg-slate-950/80 px-2.5 py-1 rounded-lg border border-slate-800/80 text-slate-400">
+                                                <span className="text-slate-500 shrink-0 text-[10px] uppercase font-sans font-bold">Resolved:</span>
+                                                <span className="text-purple-300 truncate" title={preview}>
+                                                  {preview}
+                                                </span>
+                                              </div>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    );
+                                  })()}
+
+                                  {/* Static Element Note */}
+                                  {stepMode === 'Static' && (
+                                    <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 flex items-center justify-between text-xs text-slate-400">
+                                      <div className="flex items-center gap-2">
+                                        <span className="w-2 h-2 rounded-full bg-slate-500"></span>
+                                        <span>Static Element – Braces '{ }' are treated as literal characters. No dynamic input required.</span>
                                       </div>
                                     </div>
-                                  );
-                                })}
-                              </div>
-                            );
-                          })()}
-
-                          {/* Inline URL Input for Navigate To URL */}
-                          {step.nlpId === 'navigate_to_url' && (
-                            <div className="flex items-center gap-2 pt-1.5 max-w-xl">
-                              <span className="text-[11px] font-semibold text-slate-400 shrink-0">Target URL:</span>
-                              <div className="relative flex-1">
-                                <input
-                                  type="text"
-                                  placeholder="e.g. https://example.com or $baseURL"
-                                  value={step.parameters?.url || ''}
-                                  onChange={(e) =>
-                                    handleInputWithVarSuggestions(
-                                      `step_${step.id}_url`,
-                                      e.target.value,
-                                      (newV) => {
-                                        handleInlineParamChange(step.id, 'url', newV);
-                                        handleSaveInlineParam(step.id);
-                                      }
-                                    )
-                                  }
-                                  onBlur={() => {
-                                    setTimeout(() => {
-                                      setVarAutoComplete(prev => prev?.inputId === `step_${step.id}_url` ? null : prev);
-                                    }, 200);
-                                    handleSaveInlineParam(step.id);
-                                  }}
-                                  className="w-full px-2.5 py-1 text-xs bg-slate-950 border border-slate-700/80 rounded-lg text-emerald-400 placeholder:text-slate-600 focus:outline-none focus:border-brand-500 font-mono"
-                                />
-                                {renderVariableDropdown(`step_${step.id}_url`)}
-                              </div>
-                              {!step.parameters?.url && (
-                                <span className="text-[10px] text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 whitespace-nowrap">
-                                  URL Required
-                                </span>
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center justify-between">
+                                  <span>This NLP action requires a target UI element from the Repository.</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setElementPickerStepId(activeEditingStep.id);
+                                      setElementSearchQuery('');
+                                      setIsElementPickerOpen(true);
+                                    }}
+                                    className="px-2.5 py-1 rounded-lg bg-rose-600 text-white font-semibold text-xs"
+                                  >
+                                    Select Element
+                                  </button>
+                                </div>
                               )}
                             </div>
                           )}
 
-                          {/* Inline Input for Enter Text */}
-                          {step.nlpId === 'enter_text' && (
-                            <div className="flex items-center gap-2 pt-1.5 max-w-xl">
-                              <span className="text-[11px] font-semibold text-slate-400 shrink-0">Input Data:</span>
-                              <div className="relative flex-1">
-                                <input
-                                  type="text"
-                                  placeholder="e.g. customer@demo.com or $username"
-                                  value={step.parameters?.text !== undefined ? step.parameters.text : (step.parameters?.inputData || '')}
-                                  onChange={(e) =>
-                                    handleInputWithVarSuggestions(
-                                      `step_${step.id}_text`,
-                                      e.target.value,
-                                      (newV) => {
-                                        handleInlineParamChange(step.id, 'text', newV);
-                                        handleSaveInlineParam(step.id);
-                                      }
-                                    )
-                                  }
-                                  onBlur={() => {
-                                    setTimeout(() => {
-                                      setVarAutoComplete(prev => prev?.inputId === `step_${step.id}_text` ? null : prev);
-                                    }, 200);
-                                    handleSaveInlineParam(step.id);
-                                  }}
-                                  className="w-full px-2.5 py-1 text-xs bg-slate-950 border border-slate-700/80 rounded-lg text-brand-300 placeholder:text-slate-600 focus:outline-none focus:border-brand-500 font-mono"
-                                />
-                                {renderVariableDropdown(`step_${step.id}_text`)}
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Inline Input for Verify Text */}
-                          {step.nlpId === 'verify_text' && (
-                            <div className="flex items-center gap-2 pt-1.5 max-w-xl">
-                              <span className="text-[11px] font-semibold text-slate-400 shrink-0">Expected Text:</span>
-                              <div className="relative flex-1">
-                                <input
-                                  type="text"
-                                  placeholder="e.g. Welcome or $VerificationText"
-                                  value={step.parameters?.expectedText || ''}
-                                  onChange={(e) =>
-                                    handleInputWithVarSuggestions(
-                                      `step_${step.id}_expectedText`,
-                                      e.target.value,
-                                      (newV) => {
-                                        handleInlineParamChange(step.id, 'expectedText', newV);
-                                        handleSaveInlineParam(step.id);
-                                      }
-                                    )
-                                  }
-                                  onBlur={() => {
-                                    setTimeout(() => {
-                                      setVarAutoComplete(prev => prev?.inputId === `step_${step.id}_expectedText` ? null : prev);
-                                    }, 200);
-                                    handleSaveInlineParam(step.id);
-                                  }}
-                                  className="w-full px-2.5 py-1 text-xs bg-slate-950 border border-slate-700/80 rounded-lg text-purple-300 placeholder:text-slate-600 focus:outline-none focus:border-brand-500 font-mono"
-                                />
-                                {renderVariableDropdown(`step_${step.id}_expectedText`)}
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Global Wait Setting Notice for Wait NLPs (Section 6) */}
-                          {step.nlpCategory === 'Wait' && (
-                            <div className="flex items-center gap-1.5 pt-1 text-[11px] text-cyan-400/90 font-medium">
-                              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400"></span>
-                              <span>Configured by Global Wait Settings ({((runSettings.globalWaitTimeMs || 8000) / 1000)}s timeout)</span>
-                            </div>
-                          )}
-
-                          {/* Parameter Chips */}
-                          {step.parameters && Object.keys(step.parameters).length > 0 && (
-                            <div className="flex flex-wrap gap-1.5 pt-1">
-                              {Object.entries(step.parameters).map(([k, v]) => {
-                                if (step.nlpId === 'navigate_to_url' && k === 'url') return null;
-                                if (step.nlpId === 'enter_text' && (k === 'text' || k === 'inputData')) return null;
-                                if (step.nlpId === 'verify_text' && k === 'expectedText') return null;
-                                if (k === 'dynamicValues') return null;
-                                if (v === undefined || v === '') return null;
-                                const isVariable = typeof v === 'string' && v.startsWith('$');
-
-                                return (
-                                  <span
-                                    key={k}
-                                    className={`px-2 py-0.5 rounded-md text-[10px] font-mono border flex items-center gap-1 ${
-                                      isVariable
-                                        ? 'bg-amber-500/10 border-amber-500/30 text-amber-300'
-                                        : 'bg-slate-950 border-slate-800 text-slate-300'
-                                    }`}
-                                  >
-                                    <span className="text-slate-500">{k}:</span>
-                                    <span>{String(v)}</span>
+                          {/* NLP Parameters Configuration */}
+                          <div className="space-y-4">
+                            {/* Wait Duration (Seconds) for Wait and Verification NLPs */}
+                            {(activeEditingStep.nlpCategory === 'Wait' || activeEditingStep.nlpCategory === 'Verification') && (
+                              <div className="p-3.5 rounded-xl bg-cyan-950/20 border border-cyan-500/30 space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <label className="text-xs font-semibold text-cyan-200 flex items-center gap-1.5">
+                                    <Clock className="w-3.5 h-3.5 text-cyan-400" />
+                                    <span>Wait Duration (Seconds)</span>
+                                    <span className="text-rose-400">*</span>
+                                  </label>
+                                  <span className="text-[10px] text-cyan-400/80 font-mono">
+                                    {activeEditingStep.nlpId === 'static_wait' ? 'Pause duration' : 'Max timeout'}
                                   </span>
-                                );
-                              })}
+                                </div>
+                                <input
+                                  type="number"
+                                  min="0.1"
+                                  max="300"
+                                  step="1"
+                                  value={activeEditingStep.parameters?.waitDuration !== undefined ? activeEditingStep.parameters.waitDuration : (activeEditingStep.nlpId === 'static_wait' ? 1 : 10)}
+                                  onChange={(e) => handleDraftParamChange('waitDuration', e.target.value)}
+                                  className="w-full px-3 py-1.5 text-xs bg-slate-950 border border-cyan-500/40 rounded-lg text-cyan-200 placeholder:text-slate-600 focus:outline-none focus:border-cyan-400 font-mono"
+                                  placeholder="e.g. 5 (seconds)"
+                                />
+                                <p className="text-[10px] text-slate-400">
+                                  {activeEditingStep.nlpId === 'static_wait'
+                                    ? 'Execution will pause for this exact duration in seconds.'
+                                    : 'Condition will wait up to this duration in seconds and continue immediately once satisfied. Overrides Global Wait Time.'}
+                                </p>
+                              </div>
+                            )}
+
+                            {/* Other NLP parameters */}
+                            {nlpDef?.requiredParams.filter(p => p.name !== 'waitDuration').map(param => {
+                              const inputId = `accordion_param_${activeEditingStep.id}_${param.name}`;
+                              return (
+                                <div key={param.name} className="space-y-1.5">
+                                  <label className="block text-xs font-semibold text-slate-300">
+                                    {param.label} <span className="text-rose-400">*</span>
+                                  </label>
+                                  {param.options ? (
+                                    <select
+                                      value={activeEditingStep.parameters?.[param.name] ?? param.defaultValue ?? ''}
+                                      onChange={(e) => handleDraftParamChange(param.name, e.target.value)}
+                                      className="w-full px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 text-slate-200 text-xs focus:border-brand-500"
+                                    >
+                                      {param.options.map(opt => (
+                                        <option key={opt} value={opt}>{opt}</option>
+                                      ))}
+                                    </select>
+                                  ) : (
+                                    <div className="relative">
+                                      <input
+                                        type={param.type === 'number' ? 'number' : 'text'}
+                                        value={activeEditingStep.parameters?.[param.name] ?? ''}
+                                        onChange={(e) =>
+                                          handleInputWithVarSuggestions(
+                                            inputId,
+                                            e.target.value,
+                                            (newV) => handleDraftParamChange(param.name, newV)
+                                          )
+                                        }
+                                        onBlur={() => {
+                                          setTimeout(() => {
+                                            setVarAutoComplete(prev => prev?.inputId === inputId ? null : prev);
+                                          }, 200);
+                                        }}
+                                        placeholder={param.placeholder || `Enter ${param.label} (type $ for variables)`}
+                                        className="w-full px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 text-slate-200 text-xs focus:border-brand-500 font-mono"
+                                      />
+                                      {renderVariableDropdown(inputId)}
+                                    </div>
+                                  )}
+                                  {param.description && (
+                                    <p className="text-[10px] text-slate-500">{param.description}</p>
+                                  )}
+                                </div>
+                              );
+                            })}
+
+                            {nlpDef?.optionalParams?.filter(p => p.name !== 'waitDuration').map(param => {
+                              const inputId = `accordion_opt_param_${activeEditingStep.id}_${param.name}`;
+                              return (
+                                <div key={param.name} className="space-y-1.5">
+                                  <label className="block text-xs font-semibold text-slate-400">
+                                    {param.label} <span className="text-[10px] text-slate-500 font-normal">(Optional)</span>
+                                  </label>
+                                  {param.options ? (
+                                    <select
+                                      value={activeEditingStep.parameters?.[param.name] ?? param.defaultValue ?? ''}
+                                      onChange={(e) => handleDraftParamChange(param.name, e.target.value)}
+                                      className="w-full px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-slate-300 text-xs focus:border-brand-500"
+                                    >
+                                      {param.options.map(opt => (
+                                        <option key={opt} value={opt}>{opt}</option>
+                                      ))}
+                                    </select>
+                                  ) : (
+                                    <div className="relative">
+                                      <input
+                                        type={param.type === 'number' ? 'number' : 'text'}
+                                        value={activeEditingStep.parameters?.[param.name] ?? ''}
+                                        onChange={(e) =>
+                                          handleInputWithVarSuggestions(
+                                            inputId,
+                                            e.target.value,
+                                            (newV) => handleDraftParamChange(param.name, newV)
+                                          )
+                                        }
+                                        onBlur={() => {
+                                          setTimeout(() => {
+                                            setVarAutoComplete(prev => prev?.inputId === inputId ? null : prev);
+                                          }, 200);
+                                        }}
+                                        placeholder={param.placeholder || `Enter ${param.label} (type $ for variables)`}
+                                        className="w-full px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-slate-300 text-xs focus:border-brand-500 font-mono"
+                                      />
+                                      {renderVariableDropdown(inputId)}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+
+                          {/* Validation Error Alert */}
+                          {stepValidationError && (
+                            <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2 animate-fadeIn">
+                              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                              <span>{stepValidationError}</span>
                             </div>
                           )}
+
+                          {/* Accordion Footer Action Bar */}
+                          <div className="pt-3 border-t border-slate-800 flex items-center justify-end gap-3">
+                            <button
+                              type="button"
+                              onClick={() => handleCancelStep(activeEditingStep.id)}
+                              disabled={isSavingStep}
+                              className="px-4 py-1.5 rounded-xl text-xs text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+                            >
+                              Cancel
+                            </button>
+                            {newlyAddedStepId === activeEditingStep.id ? (
+                              <button
+                                type="button"
+                                onClick={() => handleSaveStep(activeEditingStep)}
+                                disabled={isSavingStep}
+                                className="px-5 py-2 rounded-xl text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white shadow-md shadow-emerald-900/40 flex items-center gap-2 transition-all disabled:opacity-50"
+                              >
+                                {isSavingStep ? (
+                                  <>
+                                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                    <span>Saving Step...</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <CheckCircle2 className="w-3.5 h-3.5" />
+                                    <span>Save Step</span>
+                                  </>
+                                )}
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => handleSaveStep(activeEditingStep)}
+                                disabled={isSavingStep || !isStepModified}
+                                className="px-5 py-2 rounded-xl text-xs font-semibold bg-brand-600 hover:bg-brand-500 text-white shadow-md shadow-brand-900/40 flex items-center gap-2 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                              >
+                                {isSavingStep ? (
+                                  <>
+                                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                    <span>Updating Step...</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <CheckCircle2 className="w-3.5 h-3.5" />
+                                    <span>Update Step</span>
+                                  </>
+                                )}
+                              </button>
+                            )}
+                          </div>
                         </div>
                       </div>
+                    )}
 
-                      {/* Step Actions: Move, Duplicate, Edit, Delete */}
-                      <div className="flex items-center gap-1 opacity-70 group-hover/step:opacity-100 transition-opacity">
-                        <button
-                          type="button"
-                          onClick={() => handleMoveStep(index, 'up')}
-                          disabled={index === 0}
-                          className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white disabled:opacity-30"
-                          title="Move Up"
-                        >
-                          <ArrowUp className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleMoveStep(index, 'down')}
-                          disabled={index === activeScript.steps.length - 1}
-                          className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white disabled:opacity-30"
-                          title="Move Down"
-                        >
-                          <ArrowDown className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDuplicateStep(step.id)}
-                          className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white"
-                          title="Duplicate Step"
-                        >
-                          <Copy className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setEditingStep(step)}
-                          className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white"
-                          title="Configure Parameters"
-                        >
-                          <Edit2 className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteStep(step.id)}
-                          className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-rose-400"
-                          title="Delete Step"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* 3.3 Add Step (+) option beside/below every step (Section 3.3) */}
+                    {/* Add Step (+) option directly below every step */}
                     <div className="h-4 flex items-center justify-center opacity-0 group-hover/step:opacity-100 transition-opacity py-1 my-0.5">
                       <button
                         type="button"
@@ -1869,8 +2523,8 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
               </button>
             </div>
 
-            {/* Element Search */}
-            <div className="p-4 border-b border-slate-800 bg-slate-950/60">
+            {/* Element Search & Filter Tabs */}
+            <div className="p-4 border-b border-slate-800 bg-slate-950/60 space-y-3">
               <div className="relative">
                 <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
                 <input
@@ -1882,62 +2536,137 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
                   autoFocus
                 />
               </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setElementPickerCategory('All')}
+                  className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
+                    elementPickerCategory === 'All'
+                      ? 'bg-purple-600 text-white shadow-sm'
+                      : 'bg-slate-900 text-slate-400 hover:text-slate-200 border border-slate-800'
+                  }`}
+                >
+                  All Elements ({repoElements.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setElementPickerCategory('AI')}
+                  className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                    elementPickerCategory === 'AI'
+                      ? 'bg-purple-600 text-white shadow-sm'
+                      : 'bg-slate-900 text-purple-400 hover:bg-slate-800 border border-slate-800'
+                  }`}
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  AI Captured ({repoElements.filter(e => {
+                    const p = repoPages.find(page => page.id === e.pageId);
+                    return p?.name.toLowerCase() === 'ai elements' || e.description?.toLowerCase().includes('ai');
+                  }).length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setElementPickerCategory('Repository')}
+                  className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
+                    elementPickerCategory === 'Repository'
+                      ? 'bg-purple-600 text-white shadow-sm'
+                      : 'bg-slate-900 text-slate-400 hover:text-slate-200 border border-slate-800'
+                  }`}
+                >
+                  Repository Pages ({repoElements.filter(e => {
+                    const p = repoPages.find(page => page.id === e.pageId);
+                    return p?.name.toLowerCase() !== 'ai elements' && !e.description?.toLowerCase().includes('ai');
+                  }).length})
+                </button>
+              </div>
             </div>
 
             {/* Elements List grouped by page */}
             <div className="flex-1 overflow-y-auto p-6 space-y-4">
-              {repoPages.map(page => {
-                const pageElems = filteredElements.filter(e => e.pageId === page.id);
-                if (pageElems.length === 0) return null;
+              {filteredElements.length === 0 ? (
+                <div className="text-center py-12 text-slate-500 text-xs">
+                  No elements found matching your search and category filter.
+                </div>
+              ) : (
+                repoPages.map(page => {
+                  const pageElems = filteredElements.filter(e => e.pageId === page.id);
+                  if (pageElems.length === 0) return null;
+                  const isAiPage = page.name.toLowerCase() === 'ai elements';
 
-                return (
-                  <div key={page.id} className="space-y-2">
-                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                      <Folder className="w-3.5 h-3.5 text-purple-400" />
-                      {page.name}
-                    </span>
+                  return (
+                    <div key={page.id} className="space-y-2">
+                      <span className={`text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 ${
+                        isAiPage ? 'text-purple-300' : 'text-slate-400'
+                      }`}>
+                        {isAiPage ? <Sparkles className="w-3.5 h-3.5 text-purple-400" /> : <Folder className="w-3.5 h-3.5 text-purple-400" />}
+                        {page.name}
+                        {isAiPage && (
+                          <span className="text-[10px] lowercase font-normal px-2 py-0.2 rounded-full bg-purple-500/10 border border-purple-500/20 text-purple-300">
+                            ai auto testing
+                          </span>
+                        )}
+                      </span>
 
-                    <div className="space-y-1.5 pl-2 border-l border-slate-800">
-                      {pageElems.map(el => {
-                        const prim = el.locators.find(l => l.isPrimary) || el.locators[0];
+                      <div className="space-y-1.5 pl-2 border-l border-slate-800">
+                        {pageElems.map(el => {
+                          const prim = el.locators.find(l => l.isPrimary) || el.locators[0];
+                          const sortedLocs = [...el.locators].sort((a, b) => (a.priority || 1) - (b.priority || 1));
 
-                        return (
-                          <div
-                            key={el.id}
-                            onClick={() => handleMapElementToStep(el)}
-                            className="p-3 rounded-xl bg-slate-950 hover:bg-slate-800/80 border border-slate-800/80 hover:border-purple-500/50 cursor-pointer transition-all flex items-center justify-between group shadow-sm"
-                          >
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <span className="text-xs font-bold text-white group-hover:text-purple-300">
-                                  {el.name}
-                                </span>
-                                <span className="text-[10px] text-slate-500 font-mono">({el.type})</span>
-                                {prim && (prim.valueType === 'Dynamic' || /\{[^}]+\}/.test(prim.value || '')) && (
-                                  <span className="text-[9px] font-semibold text-purple-400 bg-purple-500/10 border border-purple-500/30 px-1.5 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-purple-400"></span>
-                                    Dynamic
+                          return (
+                            <div
+                              key={el.id}
+                              onClick={() => handleMapElementToStep(el)}
+                              className="p-3 rounded-xl bg-slate-950 hover:bg-slate-800/80 border border-slate-800/80 hover:border-purple-500/50 cursor-pointer transition-all flex items-center justify-between group shadow-sm"
+                            >
+                              <div className="space-y-1 flex-1 min-w-0 pr-4">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-xs font-bold text-white group-hover:text-purple-300">
+                                    {el.name}
                                   </span>
+                                  <span className="text-[10px] text-slate-500 font-mono">({el.type})</span>
+                                  {isAiPage && (
+                                    <span className="text-[9px] font-semibold text-purple-300 bg-purple-500/20 border border-purple-500/30 px-1.5 py-0.2 rounded-full flex items-center gap-1">
+                                      <Sparkles className="w-2.5 h-2.5" />
+                                      AI Element
+                                    </span>
+                                  )}
+                                  {prim && prim.valueType === 'Dynamic' && (
+                                    <span className="text-[9px] font-semibold text-purple-400 bg-purple-500/10 border border-purple-500/30 px-1.5 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-purple-400"></span>
+                                      Dynamic
+                                    </span>
+                                  )}
+                                  {el.learnedLocator && (
+                                    <span className="text-[9px] font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-1.5 py-0.2 rounded-full">
+                                      Learned
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-[11px] text-slate-400 font-mono mt-0.5 truncate max-w-md">
+                                  {prim?.type}: {prim?.value}
+                                </p>
+                                {sortedLocs.length > 1 && (
+                                  <p className="text-[10px] text-amber-400/90 font-mono flex items-center gap-1">
+                                    <Zap className="w-3 h-3 text-amber-400 shrink-0" />
+                                    <span>Priorities: {sortedLocs.map((l, i) => `#${l.priority || i + 1} ${l.type}`).join(' > ')}</span>
+                                  </p>
                                 )}
                               </div>
-                              <p className="text-[11px] text-slate-400 font-mono mt-0.5 truncate max-w-md">
-                                {prim?.type}: {prim?.value}
-                              </p>
-                            </div>
 
-                            <button
-                              type="button"
-                              className="px-3 py-1 rounded-lg bg-slate-900 group-hover:bg-purple-600 text-slate-300 group-hover:text-white text-xs font-medium transition-all"
-                            >
-                              Select
-                            </button>
-                          </div>
-                        );
-                      })}
+                              <button
+                                type="button"
+                                className="px-3 py-1 rounded-lg bg-slate-900 group-hover:bg-purple-600 text-slate-300 group-hover:text-white text-xs font-medium transition-all shrink-0"
+                              >
+                                Select
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })
+              )}
             </div>
           </div>
         </div>
@@ -2346,7 +3075,21 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
                 <div className="p-6 space-y-4 text-xs">
                   {/* Dynamic Locator Parameters Section */}
                   {editingStep.locator && (() => {
-                    const placeholders = extractDynamicPlaceholders(editingStep.locator);
+                    const stepMode: 'Static' | 'Dynamic' = editingStep.elementMode || repoElements.find(e => e.id === editingStep.elementId)?.elementMode || 'Static';
+                    if (stepMode === 'Static') {
+                      return (
+                        <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-between text-xs">
+                          <div className="flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-slate-500"></span>
+                            <span className="text-slate-300 font-medium">Static Element Mapped</span>
+                          </div>
+                          <span className="text-[10px] text-slate-500 font-mono bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
+                            No runtime placeholder substitution required
+                          </span>
+                        </div>
+                      );
+                    }
+                    const placeholders = extractDynamicPlaceholders(editingStep.locator, stepMode);
                     if (placeholders.length === 0) return null;
 
                     return (
@@ -2411,7 +3154,7 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
                     );
                   })()}
 
-                  {allParamsToEdit.length === 0 && (!editingStep.locator || extractDynamicPlaceholders(editingStep.locator).length === 0) && (
+                  {allParamsToEdit.length === 0 && (!editingStep.locator || extractDynamicPlaceholders(editingStep.locator, editingStep.elementMode || repoElements.find(e => e.id === editingStep.elementId)?.elementMode || 'Static').length === 0) && (
                     <div className="py-6 text-center text-slate-400">
                       <p>This action does not require any additional parameters.</p>
                     </div>
@@ -2690,6 +3433,119 @@ export const ScriptsView: React.FC<ScriptsViewProps> = ({ project, onNavigateToE
               <pre className="font-mono text-xs text-purple-200 bg-slate-900/90 p-4 rounded-xl border border-slate-800/80 overflow-x-auto leading-relaxed selection:bg-purple-600/40">
                 {generatePlaywrightCode(activeScript, repoElements, variables)}
               </pre>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Script Confirmation Modal with Suite Dependency Protection (Section 7) */}
+      {scriptToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md p-6 shadow-2xl space-y-4">
+            <div className="w-10 h-10 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 flex items-center justify-center">
+              <Trash2 className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-white">Delete Script?</h3>
+              <p className="text-xs text-slate-400 mt-1">
+                Are you sure you want to delete this script?
+              </p>
+              <div className="mt-2.5 p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs">
+                <span className="text-slate-500 text-[11px] block mb-0.5">Script Name:</span>
+                <span className="font-bold text-brand-300 font-mono text-sm">{scriptToDelete.name}</span>
+              </div>
+
+              {deleteScriptDependencyWarning && deleteScriptDependencyWarning.length > 0 && (
+                <div className="mt-3 p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-amber-300 text-xs space-y-1.5 animate-fadeIn">
+                  <div className="font-semibold flex items-center gap-1.5 text-amber-400">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span>Active Test Suite Dependencies Found</span>
+                  </div>
+                  <p className="text-[11px] text-amber-200/80">
+                    This script is currently referenced by {deleteScriptDependencyWarning.length} suite(s):
+                  </p>
+                  <ul className="list-disc pl-5 text-[11px] space-y-0.5 text-amber-200/90 font-mono">
+                    {deleteScriptDependencyWarning.map(s => (
+                      <li key={s.id}>{s.name}</li>
+                    ))}
+                  </ul>
+                  <p className="text-[10px] text-amber-400/90 font-sans pt-1">
+                    Deleting this script will safely remove its reference without corrupting affected suites.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end space-x-3 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setScriptToDelete(null);
+                  setDeleteScriptDependencyWarning(null);
+                }}
+                disabled={isDeletingScript}
+                className="px-3.5 py-1.5 text-xs text-slate-400 hover:text-white rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => handleConfirmDeleteScript(!!deleteScriptDependencyWarning)}
+                disabled={isDeletingScript}
+                className="px-4 py-1.5 text-xs font-semibold bg-rose-600 hover:bg-rose-500 text-white rounded-lg transition-colors shadow-sm disabled:opacity-50"
+              >
+                {isDeletingScript ? 'Deleting...' : (deleteScriptDependencyWarning ? 'Confirm Force Delete' : 'Delete')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Dirty Draft Confirmation Modal (When switching/collapsing while unsaved modifications exist) */}
+      {dirtyConfirmModal && draftStep && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md p-6 shadow-2xl space-y-4">
+            <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center justify-center">
+              <AlertCircle className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-white">Unsaved Changes in Step {draftStep.stepNumber}</h3>
+              <p className="text-xs text-slate-400 mt-1.5 leading-relaxed">
+                You have modified parameters for step <strong className="text-slate-200">"{draftStep.nlpName}"</strong>. Would you like to save your modifications, discard them, or continue editing?
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end space-x-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setDirtyConfirmModal(null)}
+                className="px-3 py-1.5 text-xs text-slate-400 hover:text-white rounded-lg transition-colors"
+              >
+                Continue Editing
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const onProceed = dirtyConfirmModal.onProceed;
+                  setDirtyConfirmModal(null);
+                  onProceed();
+                }}
+                className="px-3.5 py-1.5 text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition-colors"
+              >
+                Discard Changes
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  const onProceed = dirtyConfirmModal.onProceed;
+                  await handleSaveStep(draftStep);
+                  setDirtyConfirmModal(null);
+                  onProceed();
+                }}
+                className="px-4 py-1.5 text-xs font-semibold bg-brand-600 hover:bg-brand-500 text-white rounded-lg transition-colors shadow-sm"
+              >
+                Save & Proceed
+              </button>
             </div>
           </div>
         </div>

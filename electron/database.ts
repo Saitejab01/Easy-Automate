@@ -5,6 +5,11 @@ import bcrypt from 'bcryptjs';
 import os from 'os';
 import * as XLSX from 'xlsx';
 import { AutomationEngine } from './engine/automationEngine';
+import {
+  parseDynamicPlaceholders,
+  resolveDynamicPlaceholders,
+  validateDynamicPlaceholders
+} from './dynamicPlaceholder';
 
 export interface DbUser {
   id: string;
@@ -58,14 +63,29 @@ export interface Locator {
   priority?: number;
 }
 
+export interface LearnedLocatorInfo {
+  elementId: string;
+  successfulLocatorId: string;
+  locatorStrategy: LocatorType;
+  locatorValue: string;
+  lastSuccessfulExecutionTime: string;
+  lastValidationStatus: 'passed' | 'failed';
+  successCount: number;
+  failureCount: number;
+  updatedAt: string;
+}
+
 export interface RepositoryElement {
   id: string;
   projectId: string;
   pageId: string;
   name: string;
   type: ElementType;
+  elementMode: 'Static' | 'Dynamic';
+  version?: number;
   description?: string;
   locators: Locator[];
+  learnedLocator?: LearnedLocatorInfo;
   createdAt: string;
   updatedAt: string;
 }
@@ -212,9 +232,16 @@ export interface ScriptStep {
   elementId?: string | null;
   elementName?: string;
   pageName?: string;
+  elementMode?: 'Static' | 'Dynamic';
+  elementVersion?: number;
+  dynamicValues?: Record<string, string>;
+  dynamicValueSources?: Record<string, { type: 'manual' | 'local_variable' | 'global_variable' | 'test_data'; source: string }>;
   locator?: {
+    id?: string;
     type: string;
     value: string;
+    valueType?: string;
+    isPrimary?: boolean;
     dynamicValues?: Record<string, string>;
   };
   parameters: Record<string, any>;
@@ -263,6 +290,9 @@ export interface StepExecutionDetail {
     page: string;
     locatorType: string;
     locatorValue: string;
+    resolvedLocatorValue?: string;
+    elementMode?: 'Static' | 'Dynamic';
+    elementVersion?: number;
     dynamicValues?: Record<string, string>;
   };
   variablesUsed?: Array<{
@@ -329,6 +359,237 @@ export interface DetailedExecutionRecord {
   scripts: ScriptExecutionDetail[];
 }
 
+// ================= AI Auto Testing Module Types ================= //
+
+export type AIModelProviderType = 'openai-compatible' | 'ollama' | 'custom';
+export type AIModelAuthType = 'none' | 'bearer' | 'api-key' | 'custom-header';
+export type AIModelConnectionStatus =
+  | 'Not Connected'
+  | 'Connecting'
+  | 'Connected'
+  | 'Authentication Required'
+  | 'Invalid API URL'
+  | 'Authentication Failed'
+  | 'Model Not Available'
+  | 'Connection Failed';
+
+export interface AIModelConfiguration {
+  id: string;
+  name: string;
+  apiBaseUrl: string;
+  modelName: string;
+  providerType: AIModelProviderType;
+  authType: AIModelAuthType;
+  apiToken?: string;
+  customHeaderName?: string;
+  customHeaderValue?: string;
+  additionalHeaders?: Record<string, string>;
+  status: AIModelConnectionStatus;
+  isDefault: boolean;
+  lastTestedAt?: string;
+  lastLatencyMs?: number;
+  availableModels?: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type AIDocumentType = 'pdf' | 'docx' | 'xlsx' | 'txt' | 'md' | 'other';
+export type AIDocumentStatus = 'Uploaded' | 'Processing' | 'Processed' | 'Partially Processed' | 'Failed';
+export type AIDocumentCategory =
+  | 'Manual Test Cases'
+  | 'BRD / Requirement Document'
+  | 'Application Flow / Workflow Description'
+  | 'Other / Unsupported Document';
+
+export interface AIDocument {
+  id: string;
+  projectId: string;
+  fileName: string;
+  fileSize: number;
+  fileType: AIDocumentType;
+  uploadedAt: string;
+  status: AIDocumentStatus;
+  errorMessage?: string;
+  extractedContent: string;
+  detectedCategory: AIDocumentCategory;
+  userCategory?: AIDocumentCategory;
+  metadata?: {
+    pagesCount?: number;
+    wordCount?: number;
+    testCasesDetected?: number;
+  };
+}
+
+export interface AIManualTestCaseStep {
+  stepNumber: number;
+  stepDescription: string;
+  input: string;
+  expectedResult: string;
+}
+
+export interface AIManualTestCase {
+  id: string;
+  projectId: string;
+  documentId?: string;
+  name: string;
+  description?: string;
+  userPrompt?: string;
+  version: number;
+  status: 'draft' | 'accepted' | 'rejected';
+  steps: AIManualTestCaseStep[];
+  createdAt: string;
+  acceptedAt?: string;
+}
+
+export type AIAutomationStage =
+  | 'Document Uploaded'
+  | 'Document Processed'
+  | 'Test Cases Generated'
+  | 'Waiting for User Approval'
+  | 'Test Cases Accepted'
+  | 'Browser Initialized'
+  | 'Application Opened'
+  | 'Elements Identified'
+  | 'Locators Validated'
+  | 'NLP Mapping Completed'
+  | 'AI Elements Created'
+  | 'Automation Generated'
+  | 'Execution Completed'
+  | 'Script Ready for Review'
+  | 'Script Pushed to TestDev';
+
+export interface AIAutomationStepDetail {
+  stepNumber: number;
+  manualStepDescription: string;
+  manualInput: string;
+  manualExpectedResult: string;
+  browserOperation?: string;
+  nlpId?: string;
+  nlpName?: string;
+  elementId?: string;
+  elementName?: string;
+  locatorType?: string;
+  locatorValue?: string;
+  candidateLocators?: Locator[];
+  inputParameters?: Record<string, any>;
+  status: 'Pending' | 'Identifying Element' | 'Executing' | 'Passed' | 'Failed' | 'Skipped';
+  durationMs?: number;
+  screenshot?: string;
+  error?: string;
+  logs?: string[];
+  identificationTelemetry?: ElementIdentificationTelemetry;
+}
+
+export type ElementIdentificationStatus =
+  | 'IDENTIFIED'
+  | 'NEEDS_VISUAL_VERIFICATION'
+  | 'VISUAL_VERIFIED'
+  | 'REJECTED'
+  | 'AMBIGUOUS'
+  | 'NOT_FOUND';
+
+export interface ElementIdentificationTelemetry {
+  manualTestCaseId?: string;
+  stepNumber?: number;
+  requestedElement?: string;
+  elementMode?: 'Static' | 'Dynamic';
+  strategyUsed?: string; // 'DOM_ACCESSIBILITY' | 'DOM_CONTEXT' | 'VISUAL_AI' | 'FINGERPRINT_REUSE'
+  domAnalysisResult?: string; // 'Passed' | 'Ambiguous' | 'Mismatch' | 'Failed'
+  contextAnalysisResult?: string; // 'Passed' | 'Ambiguous' | 'Not Applicable'
+  visualAiInvoked: boolean;
+  visualAiConfidence?: number;
+  candidateLocators?: Array<{ type: string; value: string; matchCount: number; isValid: boolean; reason?: string }>;
+  fingerprintValidationResult?: 'Passed' | 'Failed' | 'Not Found' | 'Invalidated';
+  boundingBoxComparisonResult?: {
+    visualBbox?: { x: number; y: number; width: number; height: number };
+    domBbox?: { x: number; y: number; width: number; height: number };
+    iou?: number;
+    matched?: boolean;
+  };
+  highlightVerificationResult?: 'Passed' | 'Failed' | 'Skipped';
+  highlightScreenshot?: string;
+  finalSelectedLocator?: { type: string; value: string };
+  confidenceScore?: number;
+  totalIdentificationTimeMs?: number;
+  modelResponseTimeMs?: number;
+  retryCount?: number;
+  failureReason?: string;
+  status: ElementIdentificationStatus;
+}
+
+export interface ElementFingerprint {
+  id: string;
+  projectId: string;
+  elementId: string;
+  pageId?: string;
+  urlPattern?: string;
+  tagName: string;
+  accessibleRole?: string;
+  accessibleName?: string;
+  visibleText?: string;
+  attributes?: Record<string, string>;
+  parentContext?: {
+    containerTag?: string;
+    containerClass?: string;
+    containerText?: string;
+    relationship?: string;
+  };
+  domRelationship?: string;
+  locatorId?: string;
+  locatorStrategy: string;
+  locatorValue: string;
+  lastVerifiedBoundingBox?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+  lastVerifiedTimestamp: string;
+  validationStatus: ElementIdentificationStatus;
+  confidence?: number;
+  invalidationReason?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AIAutomationSession {
+  id: string;
+  projectId: string;
+  testCaseId: string;
+  testCaseName: string;
+  documentId?: string;
+  status: 'idle' | 'initializing_browser' | 'navigating' | 'developing' | 'executing' | 'completed' | 'failed' | 'paused';
+  stage: AIAutomationStage;
+  progressPercent: number;
+  currentStepIndex: number;
+  applicationUrl: string;
+  browserType: 'chromium' | 'firefox' | 'webkit';
+  steps: AIAutomationStepDetail[];
+  generatedScriptId?: string;
+  aiElementsPageId?: string;
+  createdAt: string;
+  updatedAt: string;
+  failureDetails?: {
+    stepNumber: number;
+    error: string;
+    screenshot?: string;
+  };
+}
+
+export interface AIModelUsageLog {
+  id: string;
+  modelId: string;
+  modelName: string;
+  operation: 'document_classification' | 'test_case_generation' | 'step_interpretation' | 'nlp_mapping' | 'element_suggestion' | 'test_ping' | 'visual_element_identification';
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+  latencyMs: number;
+  status: 'success' | 'failure';
+  timestamp: string;
+  errorMessage?: string;
+}
+
 export interface DatabaseSchema {
   users: DbUser[];
   projects: Project[];
@@ -341,12 +602,20 @@ export interface DatabaseSchema {
   scriptModules: ScriptModule[];
   scripts: AutomationScript[];
   variables: ScriptVariable[];
+  testSuites?: any[];
   detailedExecutions: DetailedExecutionRecord[];
   runSettings: Record<string, RunSettings>;
   executionCounter: number;
   scriptsSeededProjects?: string[];
   repositorySeededProjects?: string[];
   testDataSeededProjects?: string[];
+  learnedLocators?: Record<string, LearnedLocatorInfo>;
+  elementFingerprints?: Record<string, ElementFingerprint>;
+  aiModelConfigurations?: AIModelConfiguration[];
+  aiDocuments?: AIDocument[];
+  aiTestCases?: AIManualTestCase[];
+  aiAutomationSessions?: AIAutomationSession[];
+  aiModelUsageLogs?: AIModelUsageLog[];
 }
 
 export class JsonDatabase {
@@ -368,7 +637,14 @@ export class JsonDatabase {
     executionCounter: 1,
     scriptsSeededProjects: [],
     repositorySeededProjects: [],
-    testDataSeededProjects: []
+    testDataSeededProjects: [],
+    learnedLocators: {},
+    elementFingerprints: {},
+    aiModelConfigurations: [],
+    aiDocuments: [],
+    aiTestCases: [],
+    aiAutomationSessions: [],
+    aiModelUsageLogs: []
   };
 
   constructor(customPath?: string) {
@@ -419,6 +695,22 @@ export class JsonDatabase {
         if (!this.data.scriptsSeededProjects) this.data.scriptsSeededProjects = [];
         if (!this.data.repositorySeededProjects) this.data.repositorySeededProjects = [];
         if (!this.data.testDataSeededProjects) this.data.testDataSeededProjects = [];
+        if (!this.data.learnedLocators) this.data.learnedLocators = {};
+        if (!this.data.aiModelConfigurations) this.data.aiModelConfigurations = [];
+        if (!this.data.aiDocuments) this.data.aiDocuments = [];
+        if (!this.data.aiTestCases) this.data.aiTestCases = [];
+        if (!this.data.aiAutomationSessions) this.data.aiAutomationSessions = [];
+        if (!this.data.aiModelUsageLogs) this.data.aiModelUsageLogs = [];
+
+        // Schema migration for Dynamic Elements & Versioning
+        for (const el of this.data.elements) {
+          if (!el.elementMode) {
+            el.elementMode = (el.locators || []).some(l => l.valueType === 'Dynamic') ? 'Dynamic' : 'Static';
+          }
+          if (typeof el.version !== 'number') {
+            el.version = 1;
+          }
+        }
       } else {
         this.save();
       }
@@ -459,52 +751,58 @@ export class JsonDatabase {
         activatedAt: now
       };
 
-      const demoProjects: Project[] = [
-        {
-          id: 'proj_ecommerce_01',
-          userId: demoUserId,
-          name: 'E-Commerce Storefront Tests',
-          description: 'End-to-end regression tests for checkout, cart, and authentication.',
-          baseUrl: 'https://ecommerce-playground.demo',
-          environment: 'staging',
-          defaultBrowser: 'chromium',
-          createdAt: new Date(Date.now() - 86400000 * 3).toISOString(),
-          updatedAt: new Date(Date.now() - 86400000).toISOString(),
-          testCasesCount: 14,
-          lastExecutionStatus: 'passed'
-        },
-        {
-          id: 'proj_crm_portal_02',
-          userId: demoUserId,
-          name: 'Customer CRM Portal',
-          description: 'Playwright smoke tests for user onboarding and contact search filters.',
-          baseUrl: 'https://crm-stage.internal',
-          environment: 'development',
-          defaultBrowser: 'chromium',
-          createdAt: new Date(Date.now() - 86400000 * 7).toISOString(),
-          updatedAt: new Date(Date.now() - 86400000 * 2).toISOString(),
-          testCasesCount: 8,
-          lastExecutionStatus: 'passed'
-        }
-      ];
-
       this.data.users.push(demoUser);
-      this.data.projects.push(...demoProjects);
-      for (const p of demoProjects) {
-        this.seedProjectRepository(p.id);
-        this.seedProjectExecutions(p.id);
-        this.seedProjectTestData(p.id, demoUser.email);
-        this.seedProjectScripts(p.id, demoUser.email);
+
+      // Only seed dummy/demo projects if explicitly running tests with SEED_DEMO_PROJECTS
+      if (process.env.SEED_DEMO_PROJECTS === 'true') {
+        const demoProjects: Project[] = [
+          {
+            id: 'proj_ecommerce_01',
+            userId: demoUserId,
+            name: 'E-Commerce Storefront Tests',
+            description: 'End-to-end regression tests for checkout, cart, and authentication.',
+            baseUrl: 'https://ecommerce-playground.demo',
+            environment: 'staging',
+            defaultBrowser: 'chromium',
+            createdAt: new Date(Date.now() - 86400000 * 3).toISOString(),
+            updatedAt: new Date(Date.now() - 86400000).toISOString(),
+            testCasesCount: 14,
+            lastExecutionStatus: 'passed'
+          },
+          {
+            id: 'proj_crm_portal_02',
+            userId: demoUserId,
+            name: 'Customer CRM Portal',
+            description: 'Playwright smoke tests for user onboarding and contact search filters.',
+            baseUrl: 'https://crm-stage.internal',
+            environment: 'development',
+            defaultBrowser: 'chromium',
+            createdAt: new Date(Date.now() - 86400000 * 7).toISOString(),
+            updatedAt: new Date(Date.now() - 86400000 * 2).toISOString(),
+            testCasesCount: 8,
+            lastExecutionStatus: 'passed'
+          }
+        ];
+
+        this.data.projects.push(...demoProjects);
+        for (const p of demoProjects) {
+          this.seedProjectRepository(p.id);
+          this.seedProjectExecutions(p.id);
+          this.seedProjectTestData(p.id, demoUser.email);
+          this.seedProjectScripts(p.id, demoUser.email);
+        }
       }
       hasChanges = true;
     }
 
-    // Ensure demo projects have repository pages if missing
-    for (const p of this.data.projects) {
-      const pPages = this.data.pages.filter(page => page.projectId === p.id);
-      if (pPages.length === 0 && (p.id === 'proj_ecommerce_01' || p.id === 'proj_crm_portal_02')) {
-        this.seedProjectRepository(p.id);
-        hasChanges = true;
+    // Ensure demo projects have repository pages if missing during tests
+    if (process.env.SEED_DEMO_PROJECTS === 'true') {
+      for (const p of this.data.projects) {
+        const pPages = this.data.pages.filter(page => page.projectId === p.id);
+        if (pPages.length === 0 && (p.id === 'proj_ecommerce_01' || p.id === 'proj_crm_portal_02')) {
+          this.seedProjectRepository(p.id);
+          hasChanges = true;
+        }
       }
     }
 
@@ -537,11 +835,13 @@ export class JsonDatabase {
         pageId: loginPageId,
         name: 'Email Field',
         type: 'Input Field',
+        elementMode: 'Dynamic',
+        version: 1,
         description: 'User email or username login input',
         locators: [
           { id: 'loc_1', type: 'ID', value: 'email', valueType: 'Static', isPrimary: true },
           { id: 'loc_2', type: 'CSS Selector', value: "input[type='email']", valueType: 'Static' },
-          { id: 'loc_3', type: 'XPath', value: "//input[@placeholder='{dynamic email}']", valueType: 'Dynamic' }
+          { id: 'loc_3', type: 'XPath', value: "//input[@placeholder='{dynamic value 1}']", valueType: 'Dynamic' }
         ],
         createdAt: now,
         updatedAt: now
@@ -552,6 +852,8 @@ export class JsonDatabase {
         pageId: loginPageId,
         name: 'Password Field',
         type: 'Input Field',
+        elementMode: 'Static',
+        version: 1,
         description: 'User password input mask',
         locators: [
           { id: 'loc_4', type: 'ID', value: 'password', valueType: 'Static', isPrimary: true },
@@ -566,6 +868,8 @@ export class JsonDatabase {
         pageId: loginPageId,
         name: 'Login Button',
         type: 'Button',
+        elementMode: 'Static',
+        version: 1,
         description: 'Primary submission button for login form',
         locators: [
           { id: 'loc_6', type: 'XPath', value: "//button[@name='login']", valueType: 'Static', isPrimary: true },
@@ -581,6 +885,8 @@ export class JsonDatabase {
         pageId: loginPageId,
         name: 'Forgot Password Link',
         type: 'Link',
+        elementMode: 'Static',
+        version: 1,
         description: 'Password recovery trigger link',
         locators: [
           { id: 'loc_9', type: 'Link Text', value: 'Forgot your password?', valueType: 'Static', isPrimary: true },
@@ -595,6 +901,8 @@ export class JsonDatabase {
         pageId: headerSectionId,
         name: 'Profile Icon',
         type: 'Button',
+        elementMode: 'Static',
+        version: 1,
         description: 'Avatar dropdown opener in header',
         locators: [
           { id: 'loc_11', type: 'Test ID', value: 'user-profile-avatar', valueType: 'Static', isPrimary: true },
@@ -609,10 +917,12 @@ export class JsonDatabase {
         pageId: headerSectionId,
         name: 'Search Field',
         type: 'Input Field',
+        elementMode: 'Dynamic',
+        version: 1,
         description: 'Global storefront catalog search bar',
         locators: [
           { id: 'loc_13', type: 'Placeholder', value: 'Search products...', valueType: 'Static', isPrimary: true },
-          { id: 'loc_14', type: 'XPath', value: "//input[@name='q' and @placeholder='{dynamic search placeholder}']", valueType: 'Dynamic' }
+          { id: 'loc_14', type: 'XPath', value: "//input[@name='q' and @placeholder='{dynamic value 1}']", valueType: 'Dynamic' }
         ],
         createdAt: now,
         updatedAt: now
@@ -623,9 +933,11 @@ export class JsonDatabase {
         pageId: productSectionId,
         name: 'Product Name',
         type: 'Text / Label',
+        elementMode: 'Dynamic',
+        version: 1,
         description: 'Dynamic product title in catalog grid',
         locators: [
-          { id: 'loc_15', type: 'XPath', value: "//h3[contains(@class, 'product-title') and text()='{dynamic product name}']", valueType: 'Dynamic', isPrimary: true },
+          { id: 'loc_15', type: 'XPath', value: "//h3[contains(@class, 'product-title') and text()='{dynamic value 1}']", valueType: 'Dynamic', isPrimary: true },
           { id: 'loc_16', type: 'CSS Selector', value: '.product-card .title', valueType: 'Static' }
         ],
         createdAt: now,
@@ -637,9 +949,11 @@ export class JsonDatabase {
         pageId: productSectionId,
         name: 'Add To Cart Button',
         type: 'Button',
+        elementMode: 'Dynamic',
+        version: 1,
         description: 'Call to action button for item purchase',
         locators: [
-          { id: 'loc_17', type: 'XPath', value: "//button[@data-product-id='{dynamic product id}' and contains(., 'Add to Cart')]", valueType: 'Dynamic', isPrimary: true },
+          { id: 'loc_17', type: 'XPath', value: "//button[@data-product-id='{dynamic value 1}' and contains(., 'Add to Cart')]", valueType: 'Dynamic', isPrimary: true },
           { id: 'loc_18', type: 'Role', value: 'button[name="Add to Cart"]', valueType: 'Static' }
         ],
         createdAt: now,
@@ -651,6 +965,8 @@ export class JsonDatabase {
         pageId: cartPageId,
         name: 'Cart Items Table',
         type: 'Table',
+        elementMode: 'Static',
+        version: 1,
         description: 'List container of items in shopping cart',
         locators: [
           { id: 'loc_19', type: 'CSS Selector', value: '.cart-table tbody tr', valueType: 'Static', isPrimary: true },
@@ -665,6 +981,8 @@ export class JsonDatabase {
         pageId: cartPageId,
         name: 'Checkout Button',
         type: 'Button',
+        elementMode: 'Static',
+        version: 1,
         description: 'Initiates payment and delivery flow',
         locators: [
           { id: 'loc_21', type: 'ID', value: 'proceed-to-checkout', valueType: 'Static', isPrimary: true },
@@ -1225,21 +1543,168 @@ export class JsonDatabase {
     return true;
   }
 
-  public getRepositoryElements(projectId: string, pageId?: string): RepositoryElement[] {
-    if (pageId) {
-      return this.data.elements.filter(e => e.projectId === projectId && e.pageId === pageId);
+  // ================= Static Locator Fallback & Learned Locator Methods =================
+  public getLearnedLocator(elementId: string): LearnedLocatorInfo | null {
+    if (!this.data.learnedLocators) this.data.learnedLocators = {};
+    return this.data.learnedLocators[elementId] || null;
+  }
+
+  public getLearnedLocators(projectId?: string): Record<string, LearnedLocatorInfo> {
+    if (!this.data.learnedLocators) this.data.learnedLocators = {};
+    if (!projectId) return { ...this.data.learnedLocators };
+    const projectElementIds = new Set(this.data.elements.filter(e => e.projectId === projectId).map(e => e.id));
+    const result: Record<string, LearnedLocatorInfo> = {};
+    for (const [id, info] of Object.entries(this.data.learnedLocators)) {
+      if (projectElementIds.has(id)) {
+        result[id] = info;
+      }
     }
-    return this.data.elements.filter(e => e.projectId === projectId);
+    return result;
+  }
+
+  public recordLearnedLocatorSuccess(elementId: string, locator: Locator): LearnedLocatorInfo {
+    if (!this.data.learnedLocators) this.data.learnedLocators = {};
+    const existing = this.data.learnedLocators[elementId];
+    const now = new Date().toISOString();
+    const isSameLocator = existing && (existing.successfulLocatorId === locator.id || (existing.locatorStrategy === locator.type && existing.locatorValue === locator.value));
+    const info: LearnedLocatorInfo = {
+      elementId,
+      successfulLocatorId: locator.id || '',
+      locatorStrategy: locator.type,
+      locatorValue: locator.value,
+      lastSuccessfulExecutionTime: now,
+      lastValidationStatus: 'passed',
+      successCount: isSameLocator ? (existing.successCount || 0) + 1 : 1,
+      failureCount: isSameLocator ? (existing.failureCount || 0) : 0,
+      updatedAt: now
+    };
+    this.data.learnedLocators[elementId] = info;
+    this.save();
+    return info;
+  }
+
+  public recordLearnedLocatorFailure(elementId: string): void {
+    if (!this.data.learnedLocators) return;
+    const existing = this.data.learnedLocators[elementId];
+    if (existing) {
+      existing.lastValidationStatus = 'failed';
+      existing.failureCount = (existing.failureCount || 0) + 1;
+      existing.updatedAt = new Date().toISOString();
+      this.save();
+    }
+  }
+
+  public invalidateLearnedLocator(elementId: string): void {
+    if (!this.data.learnedLocators) return;
+    if (this.data.learnedLocators[elementId]) {
+      delete this.data.learnedLocators[elementId];
+      this.save();
+    }
+  }
+
+  public revalidateLearnedLocators(element: RepositoryElement): void {
+    if (!this.data.learnedLocators) return;
+    const learned = this.data.learnedLocators[element.id];
+    if (!learned) return;
+
+    // Rule 10.4: Invalidate if element mode is Dynamic
+    if (element.elementMode === 'Dynamic') {
+      delete this.data.learnedLocators[element.id];
+      this.save();
+      return;
+    }
+
+    // Rule 10.4: Invalidate if learned locator was deleted or modified in Repository
+    const matchingLoc = (element.locators || []).find(
+      l => (l.id && l.id === learned.successfulLocatorId) || (l.type === learned.locatorStrategy && l.value === learned.locatorValue)
+    );
+    if (!matchingLoc || matchingLoc.value !== learned.locatorValue || matchingLoc.type !== learned.locatorStrategy) {
+      delete this.data.learnedLocators[element.id];
+      this.save();
+    }
+  }
+
+  // ================= Hybrid Element Fingerprinting Methods (Section 8) =================
+  public getElementFingerprint(elementId: string): ElementFingerprint | null {
+    if (!this.data.elementFingerprints) this.data.elementFingerprints = {};
+    return this.data.elementFingerprints[elementId] || null;
+  }
+
+  public getElementFingerprints(projectId?: string): ElementFingerprint[] {
+    if (!this.data.elementFingerprints) this.data.elementFingerprints = {};
+    const all = Object.values(this.data.elementFingerprints);
+    if (!projectId) return all;
+    return all.filter(f => f.projectId === projectId);
+  }
+
+  public saveElementFingerprint(fingerprint: ElementFingerprint): ElementFingerprint {
+    if (!this.data.elementFingerprints) this.data.elementFingerprints = {};
+    const now = new Date().toISOString();
+    const existing = this.data.elementFingerprints[fingerprint.elementId];
+    const record: ElementFingerprint = {
+      ...fingerprint,
+      id: fingerprint.id || existing?.id || `fp_${fingerprint.elementId}_${Date.now().toString(36)}`,
+      createdAt: existing?.createdAt || now,
+      updatedAt: now
+    };
+    this.data.elementFingerprints[fingerprint.elementId] = record;
+    this.save();
+    return record;
+  }
+
+  public deleteElementFingerprint(elementId: string): boolean {
+    if (!this.data.elementFingerprints) return false;
+    if (this.data.elementFingerprints[elementId]) {
+      delete this.data.elementFingerprints[elementId];
+      this.save();
+      return true;
+    }
+    return false;
+  }
+
+  public invalidateElementFingerprint(elementId: string, reason?: string): void {
+    if (!this.data.elementFingerprints) return;
+    const existing = this.data.elementFingerprints[elementId];
+    if (existing) {
+      existing.validationStatus = 'REJECTED';
+      existing.invalidationReason = reason || 'Element changed or revalidation requested';
+      existing.updatedAt = new Date().toISOString();
+      this.save();
+    }
+  }
+
+  public getRepositoryElements(projectId: string, pageId?: string): RepositoryElement[] {
+    const rawElements = pageId
+      ? this.data.elements.filter(e => e.projectId === projectId && e.pageId === pageId)
+      : this.data.elements.filter(e => e.projectId === projectId);
+
+    rawElements.forEach(e => {
+      e.learnedLocator = this.getLearnedLocator(e.id) || undefined;
+    });
+    return rawElements;
   }
 
   public getRepositoryElementById(elementId: string, projectId: string): RepositoryElement | undefined {
-    return this.data.elements.find(e => e.id === elementId && e.projectId === projectId);
+    let el = this.data.elements.find(e => e.id === elementId && e.projectId === projectId);
+    if (!el && projectId && elementId) {
+      // In case elementId and projectId were passed in swapped order
+      el = this.data.elements.find(e => e.id === projectId && e.projectId === elementId);
+    }
+    if (!el && elementId) {
+      el = this.data.elements.find(e => e.id === elementId);
+    }
+    if (!el && projectId) {
+      el = this.data.elements.find(e => e.id === projectId);
+    }
+    if (!el) return undefined;
+    el.learnedLocator = this.getLearnedLocator(el.id) || undefined;
+    return el;
   }
 
   public createRepositoryElement(
     projectId: string,
     pageId: string,
-    data: { name: string; type: ElementType; description?: string; locators: Locator[] }
+    data: { name: string; type: ElementType; elementMode?: 'Static' | 'Dynamic'; description?: string; locators: Locator[] }
   ): RepositoryElement {
     const cleanName = data.name.trim();
     if (!cleanName) {
@@ -1252,6 +1717,9 @@ export class JsonDatabase {
       throw new Error('At least one locator configuration is required.');
     }
 
+    const primaryLoc = data.locators.find(l => l.isPrimary) || data.locators[0];
+    const elementMode: 'Static' | 'Dynamic' = data.elementMode || primaryLoc?.valueType || (data.locators.some(l => l.valueType === 'Dynamic') ? 'Dynamic' : 'Static');
+
     data.locators.forEach((loc, idx) => {
       if (!loc.type) {
         throw new Error(`Locator #${idx + 1}: Locator Type is mandatory.`);
@@ -1259,10 +1727,12 @@ export class JsonDatabase {
       if (!loc.value || !loc.value.trim()) {
         throw new Error(`Locator #${idx + 1}: Locator Value cannot be empty.`);
       }
-      const openCount = (loc.value.match(/\{/g) || []).length;
-      const closeCount = (loc.value.match(/\}/g) || []).length;
-      if (openCount !== closeCount) {
-        throw new Error(`Locator #${idx + 1}: Incomplete dynamic placeholder syntax. Braces '{' and '}' must match.`);
+      if (loc.valueType === 'Dynamic') {
+        const openCount = (loc.value.match(/\{/g) || []).length;
+        const closeCount = (loc.value.match(/\}/g) || []).length;
+        if (openCount !== closeCount) {
+          throw new Error(`Locator #${idx + 1}: Incomplete dynamic placeholder syntax. Braces '{' and '}' must match.`);
+        }
       }
     });
 
@@ -1273,6 +1743,8 @@ export class JsonDatabase {
       pageId,
       name: cleanName,
       type: data.type,
+      elementMode,
+      version: 1,
       description: data.description?.trim() || '',
       locators: data.locators.map((l, i) => ({
         ...l,
@@ -1288,10 +1760,34 @@ export class JsonDatabase {
     return newElement;
   }
 
+  public checkElementDependencies(elementId: string, projectId: string): {
+    hasDependencies: boolean;
+    dependentScripts: Array<{ id: string; name: string; stepNumbers: number[] }>;
+  } {
+    const scripts = this.data.scripts.filter(s => s.projectId === projectId);
+    const dependentScripts: Array<{ id: string; name: string; stepNumbers: number[] }> = [];
+
+    for (const scr of scripts) {
+      const matchingSteps = (scr.steps || []).filter(st => st.elementId === elementId);
+      if (matchingSteps.length > 0) {
+        dependentScripts.push({
+          id: scr.id,
+          name: scr.name,
+          stepNumbers: matchingSteps.map(st => st.stepNumber)
+        });
+      }
+    }
+
+    return {
+      hasDependencies: dependentScripts.length > 0,
+      dependentScripts
+    };
+  }
+
   public updateRepositoryElement(
     elementId: string,
     projectId: string,
-    data: { name: string; type: ElementType; description?: string; pageId?: string; locators: Locator[] }
+    data: { name: string; type: ElementType; elementMode?: 'Static' | 'Dynamic'; description?: string; pageId?: string; locators: Locator[] }
   ): RepositoryElement {
     const el = this.getRepositoryElementById(elementId, projectId);
     if (!el) {
@@ -1309,6 +1805,9 @@ export class JsonDatabase {
       throw new Error('At least one locator configuration is required.');
     }
 
+    const primaryLoc = data.locators.find(l => l.isPrimary) || data.locators[0];
+    const newMode: 'Static' | 'Dynamic' = data.elementMode || primaryLoc?.valueType || (data.locators.some(l => l.valueType === 'Dynamic') ? 'Dynamic' : 'Static');
+
     data.locators.forEach((loc, idx) => {
       if (!loc.type) {
         throw new Error(`Locator #${idx + 1}: Locator Type is mandatory.`);
@@ -1316,15 +1815,19 @@ export class JsonDatabase {
       if (!loc.value || !loc.value.trim()) {
         throw new Error(`Locator #${idx + 1}: Locator Value cannot be empty.`);
       }
-      const openCount = (loc.value.match(/\{/g) || []).length;
-      const closeCount = (loc.value.match(/\}/g) || []).length;
-      if (openCount !== closeCount) {
-        throw new Error(`Locator #${idx + 1}: Incomplete dynamic placeholder syntax. Braces '{' and '}' must match.`);
+      if (loc.valueType === 'Dynamic') {
+        const openCount = (loc.value.match(/\{/g) || []).length;
+        const closeCount = (loc.value.match(/\}/g) || []).length;
+        if (openCount !== closeCount) {
+          throw new Error(`Locator #${idx + 1}: Incomplete dynamic placeholder syntax. Braces '{' and '}' must match.`);
+        }
       }
     });
 
     el.name = cleanName;
     el.type = data.type;
+    el.elementMode = newMode;
+    el.version = (el.version || 1) + 1;
     if (data.description !== undefined) el.description = data.description.trim();
     if (data.pageId) el.pageId = data.pageId;
     el.locators = data.locators.map((l, i) => ({
@@ -1334,16 +1837,109 @@ export class JsonDatabase {
     }));
     el.updatedAt = new Date().toISOString();
 
+    // ================= Requirement 8: Application-Wide Automatic Synchronization =================
+    // Propagate updated name, mode, version, and primary locator to all dependent scripts in project
+    const syncPrimaryLoc = el.locators.find(l => l.isPrimary) || el.locators[0];
+    const projectScripts = this.data.scripts.filter(s => s.projectId === projectId);
+    let scriptsUpdated = false;
+
+    for (const script of projectScripts) {
+      let scriptModified = false;
+      for (const step of script.steps || []) {
+        if (
+          step.elementId === elementId ||
+          (!step.elementId && step.elementName && step.elementName.trim().toLowerCase() === el.name.trim().toLowerCase())
+        ) {
+          step.elementId = elementId;
+          step.elementName = cleanName;
+          step.elementMode = newMode;
+          step.elementVersion = el.version;
+          step.locator = {
+            id: syncPrimaryLoc.id || 'loc_1',
+            type: syncPrimaryLoc.type,
+            value: syncPrimaryLoc.value,
+            valueType: syncPrimaryLoc.valueType || (newMode === 'Dynamic' ? 'Dynamic' : 'Static'),
+            isPrimary: true
+          };
+
+          if (newMode === 'Static') {
+            // Mode switched to Static: stop dynamic runtime substitution
+            step.dynamicValues = {};
+            if (step.parameters && step.parameters.dynamicValues) {
+              delete step.parameters.dynamicValues;
+            }
+          } else {
+            // Mode is Dynamic: re-parse recognized placeholders and preserve existing values
+            const recognized = parseDynamicPlaceholders(primaryLoc.value);
+            const currentDyn = { ...(step.dynamicValues || {}), ...(step.parameters?.dynamicValues || {}) };
+            const preservedDyn: Record<string, string> = {};
+            for (const ph of recognized) {
+              if (currentDyn[ph] !== undefined) {
+                preservedDyn[ph] = currentDyn[ph];
+              }
+            }
+            step.dynamicValues = preservedDyn;
+            if (!step.parameters) step.parameters = {};
+            step.parameters.dynamicValues = preservedDyn;
+          }
+          scriptModified = true;
+        }
+      }
+      if (scriptModified) {
+        script.updatedAt = new Date().toISOString();
+        scriptsUpdated = true;
+      }
+    }
+
+    // Revalidate learned locators (invalidate if mode changed to Dynamic or learned locator was modified/deleted)
+    this.revalidateLearnedLocators(el);
+
     this.save();
     return el;
   }
 
-  public deleteRepositoryElement(elementId: string, projectId: string): boolean {
-    const idx = this.data.elements.findIndex(e => e.id === elementId && e.projectId === projectId);
+  public deleteRepositoryElement(elementId: string, projectId: string, force: boolean = false): boolean {
+    let idx = this.data.elements.findIndex(e => e.id === elementId && e.projectId === projectId);
+    if (idx === -1 && projectId && elementId) {
+      idx = this.data.elements.findIndex(e => e.id === projectId && e.projectId === elementId);
+    }
+    if (idx === -1 && elementId) {
+      idx = this.data.elements.findIndex(e => e.id === elementId);
+    }
     if (idx === -1) {
       throw new Error('Element not found.');
     }
+    const el = this.data.elements[idx];
+
+    // Requirement 8.1: Dependency tracking & deletion protection
+    if (!force) {
+      const deps = this.checkElementDependencies(elementId, projectId);
+      if (deps.hasDependencies) {
+        const scriptNames = deps.dependentScripts.map(d => `"${d.name}" (Steps: ${d.stepNumbers.join(', ')})`).join(', ');
+        const err: any = new Error(
+          `Cannot delete element "${el.name}" because it is currently referenced by ${deps.dependentScripts.length} script(s): ${scriptNames}. Confirm deletion with force flag to proceed.`
+        );
+        err.hasDependencies = true;
+        err.dependentScripts = deps.dependentScripts;
+        throw err;
+      }
+    } else {
+      // If forced, do NOT cascade delete scripts - mark dependent steps safely
+      const projectScripts = this.data.scripts.filter(s => s.projectId === projectId);
+      for (const script of projectScripts) {
+        let modified = false;
+        for (const step of script.steps || []) {
+          if (step.elementId === elementId) {
+            step.elementName = `${step.elementName || el.name} (Archived/Deleted)`;
+            modified = true;
+          }
+        }
+        if (modified) script.updatedAt = new Date().toISOString();
+      }
+    }
+
     this.data.elements.splice(idx, 1);
+    this.invalidateLearnedLocator(elementId);
     this.save();
     return true;
   }
@@ -2750,16 +3346,65 @@ export class JsonDatabase {
     return script;
   }
 
-  public deleteScript(scriptId: string, projectId: string): boolean {
+  public checkScriptDependencies(scriptId: string, projectId: string): {
+    success: boolean;
+    hasDependencies: boolean;
+    dependentSuites: Array<{ id: string; name: string }>;
+  } {
+    const dependentSuites: Array<{ id: string; name: string }> = [];
+    const suites = (this.data as any).testSuites || [];
+    for (const suite of suites) {
+      if (suite.projectId === projectId && Array.isArray(suite.scriptIds) && suite.scriptIds.includes(scriptId)) {
+        dependentSuites.push({ id: suite.id, name: suite.name || 'Unnamed Suite' });
+      }
+    }
+    return {
+      success: true,
+      hasDependencies: dependentSuites.length > 0,
+      dependentSuites
+    };
+  }
+
+  public deleteScript(
+    scriptId: string,
+    projectId: string,
+    force: boolean = false
+  ): {
+    success: boolean;
+    hasDependencies?: boolean;
+    dependentSuites?: Array<{ id: string; name: string }>;
+    error?: string;
+  } {
     const idx = this.data.scripts.findIndex(s => s.id === scriptId && s.projectId === projectId);
     if (idx === -1) throw new Error('Script not found.');
+
+    const script = this.data.scripts[idx];
+    const deps = this.checkScriptDependencies(scriptId, projectId);
+
+    if (deps.hasDependencies && !force) {
+      const err: any = new Error(`Script "${script.name}" is referenced by ${deps.dependentSuites.length} test suite(s).`);
+      err.hasDependencies = true;
+      err.dependentSuites = deps.dependentSuites;
+      throw err;
+    }
+
+    // Safely remove script reference from any dependent suites
+    if (deps.hasDependencies) {
+      const suites = (this.data as any).testSuites || [];
+      for (const suite of suites) {
+        if (suite.projectId === projectId && Array.isArray(suite.scriptIds)) {
+          suite.scriptIds = suite.scriptIds.filter((id: string) => id !== scriptId);
+        }
+      }
+    }
 
     // Remove local variables for this script
     this.data.variables = this.data.variables.filter(v => v.scriptId !== scriptId);
 
+    // Remove script from active list (historical execution records are preserved)
     this.data.scripts.splice(idx, 1);
     this.save();
-    return true;
+    return { success: true };
   }
 
   // --- Step Management Area (Section 3.2, 3.3, 3.4) ---
@@ -2773,6 +3418,20 @@ export class JsonDatabase {
     const script = this.getScriptById(scriptId, projectId);
     if (!script) throw new Error('Script not found.');
 
+    let derivedMode = stepData.elementMode;
+    let derivedVersion = stepData.elementVersion;
+    if (stepData.elementId) {
+      const el = this.getRepositoryElementById(stepData.elementId, projectId);
+      if (el) {
+        const pri = el.locators?.find(l => l.isPrimary) || el.locators?.[0];
+        if (!derivedMode) derivedMode = pri?.valueType || el.elementMode || 'Static';
+        if (!derivedVersion) derivedVersion = el.version || 1;
+      }
+    }
+    if (!derivedMode) {
+      derivedMode = (stepData.locator as any)?.valueType || 'Static';
+    }
+
     const newStep: ScriptStep = {
       id: 'step_' + crypto.randomUUID().slice(0, 8),
       stepNumber: 0, // Recalculated below
@@ -2782,6 +3441,8 @@ export class JsonDatabase {
       description: stepData.description || stepData.nlpName,
       elementId: stepData.elementId || null,
       elementName: stepData.elementName,
+      elementMode: derivedMode,
+      elementVersion: derivedVersion || 1,
       pageName: stepData.pageName,
       locator: stepData.locator,
       parameters: stepData.parameters || {},
@@ -2825,6 +3486,8 @@ export class JsonDatabase {
     if (updates.description !== undefined) step.description = updates.description;
     if (updates.elementId !== undefined) step.elementId = updates.elementId;
     if (updates.elementName !== undefined) step.elementName = updates.elementName;
+    if (updates.elementMode !== undefined) step.elementMode = updates.elementMode;
+    if (updates.elementVersion !== undefined) step.elementVersion = updates.elementVersion;
     if (updates.pageName !== undefined) step.pageName = updates.pageName;
     if (updates.locator !== undefined) step.locator = updates.locator;
     if (updates.parameters !== undefined) step.parameters = updates.parameters;
@@ -3051,6 +3714,22 @@ export class JsonDatabase {
     return this.data.detailedExecutions.find(e => e.id === executionId && e.projectId === projectId);
   }
 
+  public deleteDetailedExecution(executionId: string, projectId: string): boolean {
+    if (!this.data.detailedExecutions) this.data.detailedExecutions = [];
+    const initialLen = this.data.detailedExecutions.length;
+    this.data.detailedExecutions = this.data.detailedExecutions.filter(
+      e => !(e.id === executionId && e.projectId === projectId)
+    );
+    if (this.data.executions) {
+      this.data.executions = this.data.executions.filter(
+        e => !(e.id === executionId && e.projectId === projectId)
+      );
+    }
+    const changed = this.data.detailedExecutions.length !== initialLen;
+    if (changed) this.save();
+    return changed;
+  }
+
   public async executeScript(
     projectId: string,
     scriptId: string,
@@ -3079,6 +3758,9 @@ export class JsonDatabase {
       localVariables: localVars,
       globalVariables: globalVars,
       runSettings: settings,
+      getLearnedLocator: (elemId: string) => this.getLearnedLocator(elemId),
+      onLearnedLocatorSuccess: (elemId: string, locator: any) => this.recordLearnedLocatorSuccess(elemId, locator),
+      onLearnedLocatorFailure: (elemId: string) => this.recordLearnedLocatorFailure(elemId),
       onFileUpdated: (updatedFile) => {
         const idx = this.data.testDataFiles.findIndex(f => f.id === updatedFile.id);
         if (idx !== -1) {
@@ -3194,5 +3876,355 @@ export class JsonDatabase {
     file.uploadedAt = new Date().toISOString();
     this.save();
     return true;
+  }
+
+  // ================= AI Auto Testing Module DB Methods ================= //
+
+  public getAIModelConfigurations(): AIModelConfiguration[] {
+    if (!this.data.aiModelConfigurations) this.data.aiModelConfigurations = [];
+    return this.data.aiModelConfigurations.map(c => ({
+      ...c,
+      // Mask token in UI responses for security (Section 3.4 & 16)
+      apiToken: c.apiToken ? '••••••••' : undefined
+    }));
+  }
+
+  public getRawAIModelConfigurationById(id: string): AIModelConfiguration | undefined {
+    if (!this.data.aiModelConfigurations) this.data.aiModelConfigurations = [];
+    return this.data.aiModelConfigurations.find(c => c.id === id);
+  }
+
+  public getDefaultAIModelConfiguration(): AIModelConfiguration | undefined {
+    if (!this.data.aiModelConfigurations) this.data.aiModelConfigurations = [];
+    return this.data.aiModelConfigurations.find(c => c.isDefault) || this.data.aiModelConfigurations[0];
+  }
+
+  public saveAIModelConfiguration(config: Partial<AIModelConfiguration>): AIModelConfiguration {
+    if (!this.data.aiModelConfigurations) this.data.aiModelConfigurations = [];
+    const now = new Date().toISOString();
+
+    if (config.isDefault) {
+      this.data.aiModelConfigurations.forEach(c => {
+        c.isDefault = false;
+      });
+    }
+
+    if (config.id) {
+      const idx = this.data.aiModelConfigurations.findIndex(c => c.id === config.id);
+      if (idx !== -1) {
+        const existing = this.data.aiModelConfigurations[idx];
+        const updated: AIModelConfiguration = {
+          ...existing,
+          ...config,
+          // Preserve existing token if user didn't change it (e.g. submitted masked or undefined)
+          apiToken: config.apiToken && config.apiToken !== '••••••••' ? config.apiToken : existing.apiToken,
+          updatedAt: now
+        };
+        this.data.aiModelConfigurations[idx] = updated;
+        this.save();
+        return { ...updated, apiToken: updated.apiToken ? '••••••••' : undefined };
+      }
+    }
+
+    const newConfig: AIModelConfiguration = {
+      id: 'aimodel_' + crypto.randomUUID().slice(0, 8),
+      name: config.name || 'Local SLM',
+      apiBaseUrl: config.apiBaseUrl || 'http://localhost:11434/v1',
+      modelName: config.modelName || 'local-model',
+      providerType: config.providerType || 'openai-compatible',
+      authType: config.authType || 'none',
+      apiToken: config.apiToken && config.apiToken !== '••••••••' ? config.apiToken : undefined,
+      customHeaderName: config.customHeaderName,
+      customHeaderValue: config.customHeaderValue,
+      additionalHeaders: config.additionalHeaders || {},
+      status: config.status || 'Not Connected',
+      isDefault: this.data.aiModelConfigurations.length === 0 ? true : !!config.isDefault,
+      availableModels: config.availableModels || [],
+      lastLatencyMs: config.lastLatencyMs,
+      lastTestedAt: config.lastTestedAt,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    this.data.aiModelConfigurations.push(newConfig);
+    this.save();
+    return { ...newConfig, apiToken: newConfig.apiToken ? '••••••••' : undefined };
+  }
+
+  public deleteAIModelConfiguration(id: string): boolean {
+    if (!this.data.aiModelConfigurations) return false;
+    const idx = this.data.aiModelConfigurations.findIndex(c => c.id === id);
+    if (idx === -1) return false;
+    const wasDefault = this.data.aiModelConfigurations[idx].isDefault;
+    this.data.aiModelConfigurations.splice(idx, 1);
+    if (wasDefault && this.data.aiModelConfigurations.length > 0) {
+      this.data.aiModelConfigurations[0].isDefault = true;
+    }
+    this.save();
+    return true;
+  }
+
+  public setDefaultAIModelConfiguration(id: string): boolean {
+    if (!this.data.aiModelConfigurations) return false;
+    let found = false;
+    this.data.aiModelConfigurations.forEach(c => {
+      if (c.id === id) {
+        c.isDefault = true;
+        found = true;
+      } else {
+        c.isDefault = false;
+      }
+    });
+    if (found) this.save();
+    return found;
+  }
+
+  // --- AI Documents ---
+
+  public getAIDocuments(projectId: string): AIDocument[] {
+    if (!this.data.aiDocuments) this.data.aiDocuments = [];
+    return this.data.aiDocuments.filter(d => d.projectId === projectId);
+  }
+
+  public getAIDocumentById(id: string, projectId?: string): AIDocument | undefined {
+    if (!this.data.aiDocuments) this.data.aiDocuments = [];
+    return this.data.aiDocuments.find(d => d.id === id && (!projectId || d.projectId === projectId));
+  }
+
+  public saveAIDocument(data: Partial<AIDocument> & { projectId: string; fileName: string }): AIDocument {
+    if (!this.data.aiDocuments) this.data.aiDocuments = [];
+    const now = new Date().toISOString();
+
+    if (data.id) {
+      const idx = this.data.aiDocuments.findIndex(d => d.id === data.id && d.projectId === data.projectId);
+      if (idx !== -1) {
+        const updated = { ...this.data.aiDocuments[idx], ...data };
+        this.data.aiDocuments[idx] = updated;
+        this.save();
+        return updated;
+      }
+    }
+
+    const newDoc: AIDocument = {
+      id: 'aidoc_' + crypto.randomUUID().slice(0, 8),
+      projectId: data.projectId,
+      fileName: data.fileName,
+      fileSize: data.fileSize || 0,
+      fileType: data.fileType || 'txt',
+      uploadedAt: now,
+      status: data.status || 'Uploaded',
+      extractedContent: data.extractedContent || '',
+      detectedCategory: data.detectedCategory || 'Manual Test Cases',
+      userCategory: data.userCategory,
+      errorMessage: data.errorMessage,
+      metadata: data.metadata || {
+        wordCount: (data.extractedContent || '').split(/\s+/).filter(Boolean).length
+      }
+    };
+
+    this.data.aiDocuments.unshift(newDoc);
+    this.save();
+    return newDoc;
+  }
+
+  public deleteAIDocument(id: string, projectId: string): boolean {
+    if (!this.data.aiDocuments) return false;
+    const idx = this.data.aiDocuments.findIndex(d => d.id === id && d.projectId === projectId);
+    if (idx === -1) return false;
+    this.data.aiDocuments.splice(idx, 1);
+    this.save();
+    return true;
+  }
+
+  // --- AI Test Cases ---
+
+  public getAITestCases(projectId: string): AIManualTestCase[] {
+    if (!this.data.aiTestCases) this.data.aiTestCases = [];
+    return this.data.aiTestCases.filter(tc => tc.projectId === projectId);
+  }
+
+  public getAITestCaseById(id: string, projectId?: string): AIManualTestCase | undefined {
+    if (!this.data.aiTestCases) this.data.aiTestCases = [];
+    return this.data.aiTestCases.find(tc => tc.id === id && (!projectId || tc.projectId === projectId));
+  }
+
+  public saveAITestCase(data: Partial<AIManualTestCase> & { projectId: string; name: string }): AIManualTestCase {
+    if (!this.data.aiTestCases) this.data.aiTestCases = [];
+    const now = new Date().toISOString();
+
+    if (data.id) {
+      const idx = this.data.aiTestCases.findIndex(tc => tc.id === data.id && tc.projectId === data.projectId);
+      if (idx !== -1) {
+        const existing = this.data.aiTestCases[idx];
+        const updated: AIManualTestCase = {
+          ...existing,
+          ...data,
+          version: (existing.version || 1) + 1,
+          steps: data.steps ? data.steps.map((s, i) => ({ ...s, stepNumber: i + 1 })) : existing.steps
+        };
+        this.data.aiTestCases[idx] = updated;
+        this.save();
+        return updated;
+      }
+    }
+
+    const newTC: AIManualTestCase = {
+      id: 'aitc_' + crypto.randomUUID().slice(0, 8),
+      projectId: data.projectId,
+      documentId: data.documentId,
+      name: data.name,
+      description: data.description,
+      userPrompt: data.userPrompt,
+      version: 1,
+      status: data.status || 'draft',
+      steps: (data.steps || []).map((s, i) => ({ ...s, stepNumber: i + 1 })),
+      createdAt: now,
+      acceptedAt: data.status === 'accepted' ? now : undefined
+    };
+
+    this.data.aiTestCases.unshift(newTC);
+    this.save();
+    return newTC;
+  }
+
+  public acceptAITestCase(id: string, projectId: string): AIManualTestCase {
+    const tc = this.getAITestCaseById(id, projectId);
+    if (!tc) throw new Error('Test case not found');
+    tc.status = 'accepted';
+    tc.acceptedAt = new Date().toISOString();
+    this.save();
+    return tc;
+  }
+
+  public deleteAITestCase(id: string, projectId: string): boolean {
+    if (!this.data.aiTestCases) return false;
+    const idx = this.data.aiTestCases.findIndex(tc => tc.id === id && tc.projectId === projectId);
+    if (idx === -1) return false;
+    this.data.aiTestCases.splice(idx, 1);
+    this.save();
+    return true;
+  }
+
+  // --- AI Automation Sessions ---
+
+  public getAIAutomationSessions(projectId: string): AIAutomationSession[] {
+    if (!this.data.aiAutomationSessions) this.data.aiAutomationSessions = [];
+    return this.data.aiAutomationSessions.filter(s => s.projectId === projectId);
+  }
+
+  public getAIAutomationSessionById(id: string, projectId?: string): AIAutomationSession | undefined {
+    if (!this.data.aiAutomationSessions) this.data.aiAutomationSessions = [];
+    return this.data.aiAutomationSessions.find(s => s.id === id && (!projectId || s.projectId === projectId));
+  }
+
+  public saveAIAutomationSession(session: Partial<AIAutomationSession> & { projectId: string; testCaseId: string }): AIAutomationSession {
+    if (!this.data.aiAutomationSessions) this.data.aiAutomationSessions = [];
+    const now = new Date().toISOString();
+
+    if (session.id) {
+      const idx = this.data.aiAutomationSessions.findIndex(s => s.id === session.id);
+      if (idx !== -1) {
+        const updated = {
+          ...this.data.aiAutomationSessions[idx],
+          ...session,
+          updatedAt: now
+        };
+        this.data.aiAutomationSessions[idx] = updated;
+        this.save();
+        return updated;
+      }
+    }
+
+    const newSession: AIAutomationSession = {
+      id: 'aisess_' + crypto.randomUUID().slice(0, 8),
+      projectId: session.projectId,
+      testCaseId: session.testCaseId,
+      testCaseName: session.testCaseName || 'Automation Development',
+      documentId: session.documentId,
+      status: session.status || 'idle',
+      stage: session.stage || 'Test Cases Accepted',
+      progressPercent: session.progressPercent || 0,
+      currentStepIndex: session.currentStepIndex || 0,
+      applicationUrl: session.applicationUrl || '',
+      browserType: session.browserType || 'chromium',
+      steps: session.steps || [],
+      generatedScriptId: session.generatedScriptId,
+      aiElementsPageId: session.aiElementsPageId,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    this.data.aiAutomationSessions.unshift(newSession);
+    this.save();
+    return newSession;
+  }
+
+  public deleteAIAutomationSession(id: string, projectId: string): boolean {
+    if (!this.data.aiAutomationSessions) return false;
+    const idx = this.data.aiAutomationSessions.findIndex(s => s.id === id && s.projectId === projectId);
+    if (idx === -1) return false;
+    this.data.aiAutomationSessions.splice(idx, 1);
+    this.save();
+    return true;
+  }
+
+  // --- AI Model Usage Logs ---
+
+  public recordAIModelUsage(log: Omit<AIModelUsageLog, 'id' | 'timestamp'>): AIModelUsageLog {
+    if (!this.data.aiModelUsageLogs) this.data.aiModelUsageLogs = [];
+    const entry: AIModelUsageLog = {
+      ...log,
+      id: 'usg_' + crypto.randomUUID().slice(0, 8),
+      timestamp: new Date().toISOString()
+    };
+    this.data.aiModelUsageLogs.unshift(entry);
+    if (this.data.aiModelUsageLogs.length > 500) {
+      this.data.aiModelUsageLogs.pop();
+    }
+    this.save();
+    return entry;
+  }
+
+  public getAIModelUsageLogs(modelId?: string): {
+    logs: AIModelUsageLog[];
+    stats: {
+      totalRequests: number;
+      totalPromptTokens: number;
+      totalCompletionTokens: number;
+      totalTokens: number;
+      avgLatencyMs: number;
+      failedRequests: number;
+    };
+  } {
+    if (!this.data.aiModelUsageLogs) this.data.aiModelUsageLogs = [];
+    const logs = modelId
+      ? this.data.aiModelUsageLogs.filter(l => l.modelId === modelId)
+      : this.data.aiModelUsageLogs;
+
+    let totalPromptTokens = 0;
+    let totalCompletionTokens = 0;
+    let totalTokens = 0;
+    let totalLatency = 0;
+    let failedRequests = 0;
+
+    logs.forEach(l => {
+      totalPromptTokens += l.promptTokens || 0;
+      totalCompletionTokens += l.completionTokens || 0;
+      totalTokens += l.totalTokens || (l.promptTokens || 0) + (l.completionTokens || 0);
+      totalLatency += l.latencyMs || 0;
+      if (l.status === 'failure') failedRequests++;
+    });
+
+    return {
+      logs,
+      stats: {
+        totalRequests: logs.length,
+        totalPromptTokens,
+        totalCompletionTokens,
+        totalTokens,
+        avgLatencyMs: logs.length > 0 ? Math.round(totalLatency / logs.length) : 0,
+        failedRequests
+      }
+    };
   }
 }

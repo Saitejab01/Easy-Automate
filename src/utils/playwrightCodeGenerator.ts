@@ -1,3 +1,5 @@
+import { resolveDynamicPlaceholders } from './dynamicPlaceholder';
+
 /**
  * Generates executable Playwright TypeScript code corresponding to the automation script
  */
@@ -56,7 +58,9 @@ export function generatePlaywrightCode(
             : String(dv ?? '');
         }
       }
-      const locatorCode = getPlaywrightLocatorCode(step.locator, codeDynValues);
+      const elem = elements.find((e: any) => e.id === step.elementId);
+      const elemMode: 'Static' | 'Dynamic' = elem?.elementMode || step.elementMode || 'Static';
+      const locatorCode = getPlaywrightLocatorCode(step.locator, codeDynValues, elemMode);
 
       switch (step.nlpId) {
         // --- Browser NLPs ---
@@ -347,12 +351,20 @@ export function generatePlaywrightCode(
           break;
         }
         case 'static_wait': {
-          lines.push(`  await page.waitForTimeout(1000);`);
+          const duration = (Number(resolvedParams.waitDuration) || 1) * 1000;
+          lines.push(`  await page.waitForTimeout(${duration});`);
           break;
         }
         case 'wait_for_text': {
           const text = (resolvedParams.expectedText || '').replace(/'/g, "\\'");
-          lines.push(`  await page.getByText('${text}').first().waitFor({ state: 'visible' });`);
+          const timeoutMs = (Number(resolvedParams.waitDuration) || 10) * 1000;
+          lines.push(`  await page.getByText('${text}').first().waitFor({ state: 'visible', timeout: ${timeoutMs} });`);
+          break;
+        }
+        case 'wait_for_url': {
+          const expUrl = (resolvedParams.expectedUrl || resolvedParams.url || '').replace(/'/g, "\\'");
+          const timeoutMs = (Number(resolvedParams.waitDuration) || 10) * 1000;
+          lines.push(`  await page.waitForURL(url => url.toString().includes('${expUrl}'), { timeout: ${timeoutMs} });`);
           break;
         }
 
@@ -425,21 +437,13 @@ function resolveVariables(text: string, localVars: any[] = [], globalVars: any[]
   });
 }
 
-function getPlaywrightLocatorCode(locator: any, dynamicValues?: Record<string, string>): string {
+function getPlaywrightLocatorCode(
+  locator: any,
+  dynamicValues?: Record<string, string>,
+  elementMode: 'Static' | 'Dynamic' = 'Static'
+): string {
   if (!locator || !locator.value) return `page.locator('body')`;
-  let val = locator.value;
-  if (dynamicValues && Object.keys(dynamicValues).length > 0) {
-    for (const [k, v] of Object.entries(dynamicValues)) {
-      const cleanKey = k.replace(/^\{|\}$/g, '').trim();
-      val = val.split(`{${cleanKey}}`).join(String(v ?? ''));
-      val = val.split(`{${k}}`).join(String(v ?? ''));
-    }
-    const remainingMatches = val.match(/\{([^}]+)\}/g);
-    if (remainingMatches && Object.keys(dynamicValues).length === 1) {
-      const singleVal = Object.values(dynamicValues)[0];
-      val = val.split(remainingMatches[0]).join(String(singleVal ?? ''));
-    }
-  }
+  const { resolvedValue: val } = resolveDynamicPlaceholders(locator.value, elementMode, dynamicValues);
   const escaped = val.replace(/'/g, "\\'");
 
   switch (locator.type) {

@@ -14,7 +14,12 @@ import {
   TestDataFile,
   ExcelFormat,
   TestDataFoldersResponse,
-  TestDataFilesResponse
+  TestDataFilesResponse,
+  AIModelResponse,
+  AIDocumentsResponse,
+  AITestCasesResponse,
+  AIAutomationSessionResponse,
+  AIModelUsageResponse
 } from './types';
 import { evaluateLocatorStability } from '../utils/locatorEvaluator';
 
@@ -38,33 +43,7 @@ const LS_SEEDED_SCRIPTS = 'easy_automate_seeded_scripts';
 function getLocalModules(projectId: string): any[] {
   try {
     const raw = localStorage.getItem(LS_SCRIPT_MODULES);
-    if (!raw) {
-      const isSeeded = localStorage.getItem(LS_SEEDED_SCRIPTS + '_' + projectId);
-      if (!isSeeded) {
-        localStorage.setItem(LS_SEEDED_SCRIPTS + '_' + projectId, 'true');
-        const defaultModules = [
-          {
-            id: 'mod_login_' + projectId.slice(-4),
-            projectId,
-            name: 'Login Module',
-            parentId: null,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-          },
-          {
-            id: 'mod_checkout_' + projectId.slice(-4),
-            projectId,
-            name: 'Checkout Module',
-            parentId: null,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-          }
-        ];
-        localStorage.setItem(LS_SCRIPT_MODULES, JSON.stringify(defaultModules));
-        return defaultModules;
-      }
-      return [];
-    }
+    if (!raw) return [];
     const all = JSON.parse(raw);
     return all.filter((m: any) => m.projectId === projectId);
   } catch {
@@ -216,39 +195,7 @@ function saveLocalUsers(users: any[]) {
 function getLocalProjects(): Project[] {
   try {
     const raw = localStorage.getItem(LS_PROJECTS);
-    if (!raw) {
-      const demoProjects: Project[] = [
-        {
-          id: 'proj_ecommerce_01',
-          userId: 'usr_demo_101',
-          name: 'E-Commerce Storefront Tests',
-          description: 'End-to-end regression tests for checkout, cart, and authentication.',
-          baseUrl: 'https://ecommerce-playground.demo',
-          environment: 'staging',
-          defaultBrowser: 'chromium',
-          createdAt: new Date(Date.now() - 86400000 * 3).toISOString(),
-          updatedAt: new Date(Date.now() - 86400000).toISOString(),
-          testCasesCount: 14,
-          lastExecutionStatus: 'passed'
-        },
-        {
-          id: 'proj_crm_portal_02',
-          userId: 'usr_demo_101',
-          name: 'Customer CRM Portal',
-          description: 'Playwright smoke tests for user onboarding and contact search filters.',
-          baseUrl: 'https://crm-stage.internal',
-          environment: 'development',
-          defaultBrowser: 'chromium',
-          createdAt: new Date(Date.now() - 86400000 * 7).toISOString(),
-          updatedAt: new Date(Date.now() - 86400000 * 2).toISOString(),
-          testCasesCount: 8,
-          lastExecutionStatus: 'passed'
-        }
-      ];
-      localStorage.setItem(LS_PROJECTS, JSON.stringify(demoProjects));
-      return demoProjects;
-    }
-    return JSON.parse(raw);
+    return raw ? JSON.parse(raw) : [];
   } catch {
     return [];
   }
@@ -274,27 +221,8 @@ function saveLocalEmails(emails: SimulatedEmail[]) {
 function getLocalPages(projectId: string): RepositoryPage[] {
   try {
     const raw = localStorage.getItem(LS_PAGES);
-    let allPages: RepositoryPage[] = raw ? JSON.parse(raw) : [];
-    let projectPages = allPages.filter(p => p.projectId === projectId);
-    if (projectPages.length === 0) {
-      const now = new Date().toISOString();
-      const loginPageId = 'page_login_' + projectId.slice(-4);
-      const homePageId = 'page_home_' + projectId.slice(-4);
-      const cartPageId = 'page_cart_' + projectId.slice(-4);
-      const headerSectionId = 'subpage_header_' + projectId.slice(-4);
-      const productSectionId = 'subpage_product_' + projectId.slice(-4);
-
-      projectPages = [
-        { id: loginPageId, projectId, name: 'Login Page', parentId: null, createdAt: now, updatedAt: now },
-        { id: homePageId, projectId, name: 'Home Page', parentId: null, createdAt: now, updatedAt: now },
-        { id: headerSectionId, projectId, name: 'Header Section', parentId: homePageId, createdAt: now, updatedAt: now },
-        { id: productSectionId, projectId, name: 'Product Section', parentId: homePageId, createdAt: now, updatedAt: now },
-        { id: cartPageId, projectId, name: 'Cart Page', parentId: null, createdAt: now, updatedAt: now }
-      ];
-      allPages.push(...projectPages);
-      localStorage.setItem(LS_PAGES, JSON.stringify(allPages));
-    }
-    return projectPages;
+    const allPages: RepositoryPage[] = raw ? JSON.parse(raw) : [];
+    return allPages.filter(p => p.projectId === projectId);
   } catch {
     return [];
   }
@@ -312,163 +240,8 @@ function saveLocalPages(pages: RepositoryPage[], projectId: string) {
 function getLocalElements(projectId: string): RepositoryElement[] {
   try {
     const raw = localStorage.getItem(LS_ELEMENTS);
-    let allElements: RepositoryElement[] = raw ? JSON.parse(raw) : [];
-    let projectElements = allElements.filter(e => e.projectId === projectId);
-    if (projectElements.length === 0) {
-      const now = new Date().toISOString();
-      const loginPageId = 'page_login_' + projectId.slice(-4);
-      const headerSectionId = 'subpage_header_' + projectId.slice(-4);
-      const productSectionId = 'subpage_product_' + projectId.slice(-4);
-      const cartPageId = 'page_cart_' + projectId.slice(-4);
-
-      projectElements = [
-        {
-          id: 'el_email_' + projectId.slice(-4),
-          projectId,
-          pageId: loginPageId,
-          name: 'Email Field',
-          type: 'Input Field',
-          description: 'User email or username login input',
-          locators: [
-            { id: 'loc_1', type: 'ID', value: 'email', valueType: 'Static', isPrimary: true },
-            { id: 'loc_2', type: 'CSS Selector', value: "input[type='email']", valueType: 'Static' },
-            { id: 'loc_3', type: 'XPath', value: "//input[@placeholder='{dynamic email}']", valueType: 'Dynamic' }
-          ],
-          createdAt: now,
-          updatedAt: now
-        },
-        {
-          id: 'el_password_' + projectId.slice(-4),
-          projectId,
-          pageId: loginPageId,
-          name: 'Password Field',
-          type: 'Input Field',
-          description: 'User password input mask',
-          locators: [
-            { id: 'loc_4', type: 'ID', value: 'password', valueType: 'Static', isPrimary: true },
-            { id: 'loc_5', type: 'CSS Selector', value: "input[type='password']", valueType: 'Static' }
-          ],
-          createdAt: now,
-          updatedAt: now
-        },
-        {
-          id: 'el_login_btn_' + projectId.slice(-4),
-          projectId,
-          pageId: loginPageId,
-          name: 'Login Button',
-          type: 'Button',
-          description: 'Primary submission button for login form',
-          locators: [
-            { id: 'loc_6', type: 'XPath', value: "//button[@name='login']", valueType: 'Static', isPrimary: true },
-            { id: 'loc_7', type: 'CSS Selector', value: 'button.login-btn', valueType: 'Static' },
-            { id: 'loc_8', type: 'ID', value: 'loginButton', valueType: 'Static' }
-          ],
-          createdAt: now,
-          updatedAt: now
-        },
-        {
-          id: 'el_forgot_pwd_' + projectId.slice(-4),
-          projectId,
-          pageId: loginPageId,
-          name: 'Forgot Password Link',
-          type: 'Link',
-          description: 'Password recovery trigger link',
-          locators: [
-            { id: 'loc_9', type: 'Link Text', value: 'Forgot your password?', valueType: 'Static', isPrimary: true },
-            { id: 'loc_10', type: 'CSS Selector', value: 'a.forgot-password', valueType: 'Static' }
-          ],
-          createdAt: now,
-          updatedAt: now
-        },
-        {
-          id: 'el_profile_icon_' + projectId.slice(-4),
-          projectId,
-          pageId: headerSectionId,
-          name: 'Profile Icon',
-          type: 'Button',
-          description: 'Avatar dropdown opener in header',
-          locators: [
-            { id: 'loc_11', type: 'Test ID', value: 'user-profile-avatar', valueType: 'Static', isPrimary: true },
-            { id: 'loc_12', type: 'CSS Selector', value: 'header .profile-menu-trigger', valueType: 'Static' }
-          ],
-          createdAt: now,
-          updatedAt: now
-        },
-        {
-          id: 'el_search_field_' + projectId.slice(-4),
-          projectId,
-          pageId: headerSectionId,
-          name: 'Search Field',
-          type: 'Input Field',
-          description: 'Global storefront catalog search bar',
-          locators: [
-            { id: 'loc_13', type: 'Placeholder', value: 'Search products...', valueType: 'Static', isPrimary: true },
-            { id: 'loc_14', type: 'XPath', value: "//input[@name='q' and @placeholder='{dynamic search placeholder}']", valueType: 'Dynamic' }
-          ],
-          createdAt: now,
-          updatedAt: now
-        },
-        {
-          id: 'el_prod_name_' + projectId.slice(-4),
-          projectId,
-          pageId: productSectionId,
-          name: 'Product Name',
-          type: 'Text / Label',
-          description: 'Dynamic product title in catalog grid',
-          locators: [
-            { id: 'loc_15', type: 'XPath', value: "//h3[contains(@class, 'product-title') and text()='{dynamic product name}']", valueType: 'Dynamic', isPrimary: true },
-            { id: 'loc_16', type: 'CSS Selector', value: '.product-card .title', valueType: 'Static' }
-          ],
-          createdAt: now,
-          updatedAt: now
-        },
-        {
-          id: 'el_add_cart_' + projectId.slice(-4),
-          projectId,
-          pageId: productSectionId,
-          name: 'Add To Cart Button',
-          type: 'Button',
-          description: 'Call to action button for item purchase',
-          locators: [
-            { id: 'loc_17', type: 'XPath', value: "//button[@data-product-id='{dynamic product id}' and contains(., 'Add to Cart')]", valueType: 'Dynamic', isPrimary: true },
-            { id: 'loc_18', type: 'Role', value: 'button[name="Add to Cart"]', valueType: 'Static' }
-          ],
-          createdAt: now,
-          updatedAt: now
-        },
-        {
-          id: 'el_cart_items_' + projectId.slice(-4),
-          projectId,
-          pageId: cartPageId,
-          name: 'Cart Items Table',
-          type: 'Table',
-          description: 'List container of items in shopping cart',
-          locators: [
-            { id: 'loc_19', type: 'CSS Selector', value: '.cart-table tbody tr', valueType: 'Static', isPrimary: true },
-            { id: 'loc_20', type: 'Test ID', value: 'cart-items-list', valueType: 'Static' }
-          ],
-          createdAt: now,
-          updatedAt: now
-        },
-        {
-          id: 'el_checkout_btn_' + projectId.slice(-4),
-          projectId,
-          pageId: cartPageId,
-          name: 'Checkout Button',
-          type: 'Button',
-          description: 'Initiates payment and delivery flow',
-          locators: [
-            { id: 'loc_21', type: 'ID', value: 'proceed-to-checkout', valueType: 'Static', isPrimary: true },
-            { id: 'loc_22', type: 'XPath', value: "//button[contains(@class, 'checkout-btn')]", valueType: 'Static' }
-          ],
-          createdAt: now,
-          updatedAt: now
-        }
-      ];
-      allElements.push(...projectElements);
-      localStorage.setItem(LS_ELEMENTS, JSON.stringify(allElements));
-    }
-    return projectElements;
+    const allElements: RepositoryElement[] = raw ? JSON.parse(raw) : [];
+    return allElements.filter(e => e.projectId === projectId);
   } catch {
     return [];
   }
@@ -522,6 +295,8 @@ function saveLocalTestDataFiles(files: TestDataFile[], projectId: string) {
     localStorage.setItem(LS_TD_FILES, JSON.stringify(allFiles));
   } catch {}
 }
+
+const localElementChangeListeners: Array<(data: any) => void> = [];
 
 export const api = {
   isElectron,
@@ -788,20 +563,28 @@ export const api = {
       return { success: true, elements };
     },
 
-    async createElement(projectId: string, pageId: string, data: { name: string; type: ElementType; description?: string; locators: Locator[] }): Promise<{ success: boolean; element?: RepositoryElement; error?: string }> {
+    async createElement(
+      projectId: string,
+      pageId: string,
+      data: { name: string; type: ElementType; elementMode?: 'Static' | 'Dynamic'; description?: string; locators: Locator[] }
+    ): Promise<{ success: boolean; element?: RepositoryElement; error?: string }> {
       if (isElectron) return (window as any).electronAPI.repository.createElement(projectId, pageId, data);
       const cleanName = data.name.trim();
       if (!cleanName) return { success: false, error: 'Element Name is mandatory.' };
       if (!data.type) return { success: false, error: 'Element Type is mandatory.' };
       if (!data.locators || data.locators.length === 0) return { success: false, error: 'At least one locator configuration is required.' };
 
+      const primaryLoc = data.locators.find(l => l.isPrimary) || data.locators[0];
+      const elementMode = data.elementMode || primaryLoc?.valueType || (data.locators.some(l => l.valueType === 'Dynamic') ? 'Dynamic' : 'Static');
       for (let i = 0; i < data.locators.length; i++) {
         const l = data.locators[i];
         if (!l.type) return { success: false, error: `Locator #${i + 1}: Locator Type is mandatory.` };
         if (!l.value || !l.value.trim()) return { success: false, error: `Locator #${i + 1}: Locator Value cannot be empty.` };
-        const openCount = (l.value.match(/\{/g) || []).length;
-        const closeCount = (l.value.match(/\}/g) || []).length;
-        if (openCount !== closeCount) return { success: false, error: `Locator #${i + 1}: Incomplete dynamic placeholder syntax. Braces '{' and '}' must match.` };
+        if (l.valueType === 'Dynamic') {
+          const openCount = (l.value.match(/\{/g) || []).length;
+          const closeCount = (l.value.match(/\}/g) || []).length;
+          if (openCount !== closeCount) return { success: false, error: `Locator #${i + 1}: Incomplete dynamic placeholder syntax. Braces '{' and '}' must match.` };
+        }
       }
 
       const elements = getLocalElements(projectId);
@@ -812,6 +595,8 @@ export const api = {
         pageId,
         name: cleanName,
         type: data.type,
+        elementMode,
+        version: 1,
         description: data.description?.trim() || '',
         locators: data.locators.map((l, i) => ({
           ...l,
@@ -827,7 +612,11 @@ export const api = {
       return { success: true, element: newElement };
     },
 
-    async updateElement(elementId: string, projectId: string, data: { name: string; type: ElementType; description?: string; pageId?: string; locators: Locator[] }): Promise<{ success: boolean; element?: RepositoryElement; error?: string }> {
+    async updateElement(
+      elementId: string,
+      projectId: string,
+      data: { name: string; type: ElementType; elementMode?: 'Static' | 'Dynamic'; description?: string; pageId?: string; locators: Locator[] }
+    ): Promise<{ success: boolean; element?: RepositoryElement; error?: string }> {
       if (isElectron) return (window as any).electronAPI.repository.updateElement(elementId, projectId, data);
       const elements = getLocalElements(projectId);
       const el = elements.find(e => e.id === elementId);
@@ -838,17 +627,23 @@ export const api = {
       if (!data.type) return { success: false, error: 'Element Type is mandatory.' };
       if (!data.locators || data.locators.length === 0) return { success: false, error: 'At least one locator configuration is required.' };
 
+      const primaryLoc = data.locators.find(l => l.isPrimary) || data.locators[0];
+      const newMode = data.elementMode || primaryLoc?.valueType || (data.locators.some(l => l.valueType === 'Dynamic') ? 'Dynamic' : 'Static');
       for (let i = 0; i < data.locators.length; i++) {
         const l = data.locators[i];
         if (!l.type) return { success: false, error: `Locator #${i + 1}: Locator Type is mandatory.` };
         if (!l.value || !l.value.trim()) return { success: false, error: `Locator #${i + 1}: Locator Value cannot be empty.` };
-        const openCount = (l.value.match(/\{/g) || []).length;
-        const closeCount = (l.value.match(/\}/g) || []).length;
-        if (openCount !== closeCount) return { success: false, error: `Locator #${i + 1}: Incomplete dynamic placeholder syntax. Braces '{' and '}' must match.` };
+        if (l.valueType === 'Dynamic') {
+          const openCount = (l.value.match(/\{/g) || []).length;
+          const closeCount = (l.value.match(/\}/g) || []).length;
+          if (openCount !== closeCount) return { success: false, error: `Locator #${i + 1}: Incomplete dynamic placeholder syntax. Braces '{' and '}' must match.` };
+        }
       }
 
       el.name = cleanName;
       el.type = data.type;
+      el.elementMode = newMode;
+      el.version = (el.version || 1) + 1;
       if (data.description !== undefined) el.description = data.description.trim();
       if (data.pageId) el.pageId = data.pageId;
       el.locators = data.locators.map((l, i) => ({
@@ -859,18 +654,104 @@ export const api = {
       el.updatedAt = new Date().toISOString();
 
       saveLocalElements(elements, projectId);
+
+      // Synchronize changes to dependent scripts in browser fallback mode
+      const scripts = getLocalScripts(projectId);
+      const syncPrimaryLoc = el.locators.find(l => l.isPrimary) || el.locators[0];
+      let scriptModified = false;
+      for (const scr of scripts) {
+        for (const st of (scr.steps || [])) {
+          if (
+            st.elementId === elementId ||
+            (!st.elementId && st.elementName && st.elementName.trim().toLowerCase() === el.name.trim().toLowerCase())
+          ) {
+            st.elementId = elementId;
+            st.elementName = cleanName;
+            st.elementMode = newMode;
+            st.elementVersion = el.version;
+            st.locator = {
+              type: syncPrimaryLoc.type,
+              value: syncPrimaryLoc.value,
+              valueType: syncPrimaryLoc.valueType || (newMode === 'Dynamic' ? 'Dynamic' : 'Static'),
+              isPrimary: true
+            };
+            scriptModified = true;
+          }
+        }
+      }
+      if (scriptModified) {
+        saveLocalScripts(projectId, scripts);
+      }
+
+      localElementChangeListeners.forEach(cb => {
+        try { cb({ action: 'updated', elementId, element: el, projectId }); } catch {}
+      });
+
       return { success: true, element: el };
     },
 
-    async deleteElement(elementId: string, projectId: string): Promise<{ success: boolean; error?: string }> {
-      if (isElectron) return (window as any).electronAPI.repository.deleteElement(elementId, projectId);
+    async checkDependencies(elementId: string, projectId: string): Promise<{ success: boolean; hasDependencies?: boolean; dependentScripts?: any[]; error?: string }> {
+      if (isElectron && (window as any).electronAPI?.repository?.checkDependencies) {
+        return (window as any).electronAPI.repository.checkDependencies(elementId, projectId);
+      }
+      const scripts = getLocalScripts(projectId);
+      const dependentScripts: any[] = [];
+      for (const scr of scripts) {
+        const matchingSteps = (scr.steps || []).filter((st: any) => st.elementId === elementId);
+        if (matchingSteps.length > 0) {
+          dependentScripts.push({
+            id: scr.id,
+            name: scr.name,
+            stepNumbers: matchingSteps.map((st: any) => st.stepNumber)
+          });
+        }
+      }
+      return {
+        success: true,
+        hasDependencies: dependentScripts.length > 0,
+        dependentScripts
+      };
+    },
+
+    async deleteElement(
+      elementId: string,
+      projectId: string,
+      force: boolean = false
+    ): Promise<{ success: boolean; hasDependencies?: boolean; dependentScripts?: any[]; error?: string }> {
+      if (isElectron) return (window as any).electronAPI.repository.deleteElement(elementId, projectId, force);
       let elements = getLocalElements(projectId);
       const idx = elements.findIndex(e => e.id === elementId);
       if (idx === -1) return { success: false, error: 'Element not found.' };
 
+      if (!force) {
+        const deps = await this.checkDependencies(elementId, projectId);
+        if (deps.hasDependencies) {
+          return {
+            success: false,
+            hasDependencies: true,
+            dependentScripts: deps.dependentScripts,
+            error: `Element is referenced in ${deps.dependentScripts?.length} script(s)`
+          };
+        }
+      }
+
       elements.splice(idx, 1);
       saveLocalElements(elements, projectId);
+      localElementChangeListeners.forEach(cb => {
+        try { cb({ action: 'deleted', elementId, projectId }); } catch {}
+      });
       return { success: true };
+    },
+
+    onElementChanged(callback: (data: any) => void) {
+      if (isElectron && (window as any).electronAPI?.repository?.onElementChanged) {
+        return (window as any).electronAPI.repository.onElementChanged(callback);
+      }
+      localElementChangeListeners.push(callback);
+      return () => {
+        const idx = localElementChangeListeners.indexOf(callback);
+        if (idx !== -1) localElementChangeListeners.splice(idx, 1);
+      };
     },
 
     async testLocator(locatorType: string, locatorValue: string): Promise<{ success: boolean; matchCount: number; stability: any; error?: string }> {
@@ -947,6 +828,12 @@ export const api = {
     async setCapturedSequence(count: number) {
       if (isElectron && (window as any).electronAPI?.finder?.setCapturedSequence) {
         return (window as any).electronAPI.finder.setCapturedSequence(count);
+      }
+      return { success: true };
+    },
+    async syncSessionElements(elements: any[]) {
+      if (isElectron && (window as any).electronAPI?.finder?.syncSessionElements) {
+        return (window as any).electronAPI.finder.syncSessionElements(elements);
       }
       return { success: true };
     },
@@ -1320,8 +1207,34 @@ export const api = {
       saveLocalScripts(projectId, scripts);
       return { success: true, script };
     },
-    async deleteScript(scriptId: string, projectId: string) {
-      if (isElectron) return (window as any).electronAPI.scripts.deleteScript(scriptId, projectId);
+    async checkDependencies(scriptId: string, projectId: string): Promise<{ success: boolean; hasDependencies: boolean; dependentSuites?: Array<{ id: string; name: string }>; error?: string }> {
+      if (isElectron && (window as any).electronAPI?.scripts?.checkDependencies) {
+        return (window as any).electronAPI.scripts.checkDependencies(scriptId, projectId);
+      }
+      try {
+        const raw = localStorage.getItem('easy_automate_test_suites');
+        const suites = raw ? JSON.parse(raw) : [];
+        const dependentSuites = suites
+          .filter((s: any) => s.projectId === projectId && Array.isArray(s.scriptIds) && s.scriptIds.includes(scriptId))
+          .map((s: any) => ({ id: s.id, name: s.name || 'Unnamed Suite' }));
+        return { success: true, hasDependencies: dependentSuites.length > 0, dependentSuites };
+      } catch {
+        return { success: true, hasDependencies: false, dependentSuites: [] };
+      }
+    },
+    async deleteScript(scriptId: string, projectId: string, force: boolean = false): Promise<{ success: boolean; hasDependencies?: boolean; dependentSuites?: Array<{ id: string; name: string }>; error?: string }> {
+      if (isElectron) return (window as any).electronAPI.scripts.deleteScript(scriptId, projectId, force);
+      if (!force) {
+        const deps = await this.checkDependencies(scriptId, projectId);
+        if (deps.hasDependencies) {
+          return {
+            success: false,
+            hasDependencies: true,
+            dependentSuites: deps.dependentSuites,
+            error: `Script is referenced by ${deps.dependentSuites?.length} suite(s)`
+          };
+        }
+      }
       const scripts = getLocalScripts(projectId);
       const remaining = scripts.filter((s: any) => s.id !== scriptId);
       saveLocalScripts(projectId, remaining);
@@ -1547,6 +1460,13 @@ export const api = {
       saveLocalScripts(projectId, scripts);
 
       return { success: true, execution: executionRecord };
+    },
+    async deleteExecution(projectId: string, executionId: string): Promise<{ success: boolean; error?: string }> {
+      if (isElectron) return (window as any).electronAPI.execution.deleteExecution(executionId, projectId);
+      let execs = getLocalExecutions(projectId);
+      execs = execs.filter((e: any) => e.id !== executionId);
+      saveLocalExecutions(projectId, execs);
+      return { success: true };
     }
   },
 
@@ -1559,6 +1479,147 @@ export const api = {
     async writeData(projectId: string, fileName: string, sheetName: string, uniqueData: string, header: string, writeBackData: string) {
       if (isElectron) return (window as any).electronAPI.excel.writeData(projectId, fileName, sheetName, uniqueData, header, writeBackData);
       return { success: true, result: { fileName, sheetName, uniqueData, header, writeBackValue: writeBackData } };
+    }
+  },
+
+  // ================= AI Auto Testing Module ================= //
+  aiAutoTesting: {
+    async selectFile() {
+      if (isElectron) return (window as any).electronAPI.aiAutoTesting.selectFile();
+      return { canceled: true };
+    },
+    async getModels(): Promise<AIModelResponse> {
+      if (isElectron) return (window as any).electronAPI.aiAutoTesting.getModels();
+      return { success: true, models: [] };
+    },
+    async saveModel(config: any): Promise<AIModelResponse> {
+      if (isElectron) return (window as any).electronAPI.aiAutoTesting.saveModel(config);
+      return { success: true, model: config };
+    },
+    async deleteModel(modelId: string) {
+      if (isElectron) return (window as any).electronAPI.aiAutoTesting.deleteModel(modelId);
+      return { success: true };
+    },
+    async setDefaultModel(modelId: string) {
+      if (isElectron) return (window as any).electronAPI.aiAutoTesting.setDefaultModel(modelId);
+      return { success: true };
+    },
+    async testModelConnection(modelId?: string, config?: any): Promise<AIModelResponse> {
+      if (isElectron) return (window as any).electronAPI.aiAutoTesting.testModelConnection(modelId, config);
+      return { success: true, latencyMs: 120, availableModels: ['local-slm'] };
+    },
+    async testModelPrompt(modelId: string, prompt: string): Promise<AIModelResponse> {
+      if (isElectron) return (window as any).electronAPI.aiAutoTesting.testModelPrompt(modelId, prompt);
+      return { success: true, testOutput: 'SLM Connection Verified' };
+    },
+
+    async getDocuments(projectId: string): Promise<AIDocumentsResponse> {
+      if (isElectron) return (window as any).electronAPI.aiAutoTesting.getDocuments(projectId);
+      return { success: true, documents: [] };
+    },
+    async uploadDocument(projectId: string, filePath: string): Promise<AIDocumentsResponse> {
+      if (isElectron) return (window as any).electronAPI.aiAutoTesting.uploadDocument(projectId, filePath);
+      return { success: true };
+    },
+    async updateDocumentCategory(documentId: string, projectId: string, userCategory: any): Promise<AIDocumentsResponse> {
+      if (isElectron) return (window as any).electronAPI.aiAutoTesting.updateDocumentCategory(documentId, projectId, userCategory);
+      return { success: true };
+    },
+    async deleteDocument(documentId: string, projectId: string) {
+      if (isElectron) return (window as any).electronAPI.aiAutoTesting.deleteDocument(documentId, projectId);
+      return { success: true };
+    },
+
+    async getTestCases(projectId: string): Promise<AITestCasesResponse> {
+      if (isElectron) return (window as any).electronAPI.aiAutoTesting.getTestCases(projectId);
+      return { success: true, testCases: [] };
+    },
+    async extractTestCasesFromDoc(documentId: string, projectId: string): Promise<AITestCasesResponse> {
+      if (isElectron) return (window as any).electronAPI.aiAutoTesting.extractTestCasesFromDoc(documentId, projectId);
+      return { success: true };
+    },
+    async generateTestCasesFromBRD(documentId: string, userPrompt: string, projectId: string): Promise<AITestCasesResponse> {
+      if (isElectron) return (window as any).electronAPI.aiAutoTesting.generateTestCasesFromBRD(documentId, userPrompt, projectId);
+      return { success: true };
+    },
+    async saveTestCase(tcData: any): Promise<AITestCasesResponse> {
+      if (isElectron) return (window as any).electronAPI.aiAutoTesting.saveTestCase(tcData);
+      return { success: true, testCase: tcData };
+    },
+    async acceptTestCase(testCaseId: string, projectId: string): Promise<AITestCasesResponse> {
+      if (isElectron) return (window as any).electronAPI.aiAutoTesting.acceptTestCase(testCaseId, projectId);
+      return { success: true };
+    },
+    async deleteTestCase(testCaseId: string, projectId: string) {
+      if (isElectron) return (window as any).electronAPI.aiAutoTesting.deleteTestCase(testCaseId, projectId);
+      return { success: true };
+    },
+
+    async getSessions(projectId: string): Promise<AIAutomationSessionResponse> {
+      if (isElectron) return (window as any).electronAPI.aiAutoTesting.getSessions(projectId);
+      return { success: true, sessions: [] };
+    },
+    async startDevelopmentSession(testCaseId: string, projectId: string, customUrl?: string): Promise<AIAutomationSessionResponse> {
+      if (isElectron) return (window as any).electronAPI.aiAutoTesting.startDevelopmentSession(testCaseId, projectId, customUrl);
+      return { success: true };
+    },
+    async pauseSession() {
+      if (isElectron) return (window as any).electronAPI.aiAutoTesting.pauseSession();
+      return { success: true };
+    },
+    async resumeSession() {
+      if (isElectron) return (window as any).electronAPI.aiAutoTesting.resumeSession();
+      return { success: true };
+    },
+    async stopSession() {
+      if (isElectron) return (window as any).electronAPI.aiAutoTesting.stopSession();
+      return { success: true };
+    },
+    async retryStep(sessionId: string, projectId: string, stepNumber: number) {
+      if (isElectron) return (window as any).electronAPI.aiAutoTesting.retryStep(sessionId, projectId, stepNumber);
+      return { success: true };
+    },
+
+    async pushToTestDev(sessionId: string, projectId: string, targetModuleId: string, scriptName: string, userId: string) {
+      if (isElectron) return (window as any).electronAPI.aiAutoTesting.pushToTestDev(sessionId, projectId, targetModuleId, scriptName, userId);
+      return { success: true, scriptId: 'scr_mock' };
+    },
+
+    async saveSession(session: any): Promise<{ success: boolean; session?: any; error?: string }> {
+      if (isElectron) return (window as any).electronAPI.aiAutoTesting.saveSession(session);
+      return { success: true, session };
+    },
+
+    async deleteSession(sessionId: string, projectId: string): Promise<{ success: boolean; error?: string }> {
+      if (isElectron) return (window as any).electronAPI.aiAutoTesting.deleteSession(sessionId, projectId);
+      return { success: true };
+    },
+
+    async getUsageLogs(modelId?: string): Promise<AIModelUsageResponse> {
+      if (isElectron) return (window as any).electronAPI.aiAutoTesting.getUsageLogs(modelId);
+      return { success: true, logs: [], stats: { totalRequests: 0, totalPromptTokens: 0, totalCompletionTokens: 0, totalTokens: 0, avgLatencyMs: 0, failedRequests: 0 } };
+    },
+
+    async getFingerprints(projectId?: string): Promise<{ success: boolean; fingerprints?: any[]; error?: string }> {
+      if (isElectron) return (window as any).electronAPI.aiAutoTesting.getFingerprints(projectId);
+      return { success: true, fingerprints: [] };
+    },
+
+    async getFingerprint(elementId: string): Promise<{ success: boolean; fingerprint?: any; error?: string }> {
+      if (isElectron) return (window as any).electronAPI.aiAutoTesting.getFingerprint(elementId);
+      return { success: true, fingerprint: null };
+    },
+
+    async deleteFingerprint(elementId: string): Promise<{ success: boolean; error?: string }> {
+      if (isElectron) return (window as any).electronAPI.aiAutoTesting.deleteFingerprint(elementId);
+      return { success: true };
+    },
+
+    onSessionUpdate(callback: (session: any) => void) {
+      if (isElectron && (window as any).electronAPI?.aiAutoTesting?.onSessionUpdate) {
+        return (window as any).electronAPI.aiAutoTesting.onSessionUpdate(callback);
+      }
+      return () => {};
     }
   },
 

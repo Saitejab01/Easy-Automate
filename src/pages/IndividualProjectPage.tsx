@@ -31,9 +31,10 @@ import { TestDataView } from '../components/project/TestDataView';
 import { ScriptsView } from '../components/project/ScriptsView';
 import { ExecutionView } from '../components/project/ExecutionView';
 import { PlaceholderView } from '../components/project/PlaceholderView';
+import { AIAutoTestingView } from '../components/project/ai-auto-testing/AIAutoTestingView';
 import { ErrorBoundary } from '../components/common/ErrorBoundary';
 
-type WorkspaceSection = 'dashboard' | 'repository' | 'test-data' | 'scripts' | 'execution' | 'suites' | 'settings';
+type WorkspaceSection = 'dashboard' | 'repository' | 'test-data' | 'scripts' | 'execution' | 'suites' | 'ai-auto-testing' | 'settings';
 
 export const IndividualProjectPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -284,6 +285,24 @@ export const IndividualProjectPage: React.FC = () => {
                 Stage 6
               </span>
             </button>
+
+            {/* 6. AI Auto Testing (Section 2) */}
+            <button
+              onClick={() => setActiveSection('ai-auto-testing')}
+              className={`w-full flex items-center justify-between px-3 py-2 rounded-xl transition-all ${
+                activeSection === 'ai-auto-testing'
+                  ? 'bg-gradient-to-r from-brand-600 to-purple-600 text-white font-semibold shadow-md shadow-brand-600/30'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+              }`}
+            >
+              <div className="flex items-center gap-2.5">
+                <Sparkles className="w-4 h-4 text-brand-400 animate-pulse" />
+                <span>AI Auto Testing</span>
+              </div>
+              <span className="text-[9px] bg-brand-500/20 text-brand-300 border border-brand-500/30 px-1.5 py-0.2 rounded font-mono font-bold">
+                SLM
+              </span>
+            </button>
           </nav>
         </div>
 
@@ -339,6 +358,13 @@ export const IndividualProjectPage: React.FC = () => {
 
         {activeSection === 'suites' && (
           <PlaceholderView section="suites" projectName={project.name} />
+        )}
+
+        {activeSection === 'ai-auto-testing' && (
+          <AIAutoTestingView
+            project={project}
+            onNavigateToScriptsView={() => setActiveSection('scripts')}
+          />
         )}
 
         {activeSection === 'settings' && (

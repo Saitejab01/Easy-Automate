@@ -1,0 +1,35 @@
+{
+  "users": [
+    {
+      "id": "usr_demo_101",
+      "email": "demo@easyautomate.dev",
+      "passwordHash": "$2a$10$VIqKns0XVL8pvhTbNBRnmejB1h8qUobMtlIKXwLeWEifEgj/QRDQC",
+      "isActivated": true,
+      "createdAt": "2026-11-13T06:23:24.090Z",
+      "activatedAt": "2026-11-13T06:23:24.090Z"
+    }
+  ],
+  "projects": [],
+  "simulatedEmails": [],
+  "pages": [],
+  "elements": [],
+  "executions": [],
+  "testDataFolders": [],
+  "testDataFiles": [],
+  "scriptModules": [],
+  "scripts": [],
+  "variables": [],
+  "detailedExecutions": [],
+  "runSettings": {},
+  "executionCounter": 1,
+  "scriptsSeededProjects": [],
+  "repositorySeededProjects": [],
+  "testDataSeededProjects": [],
+  "learnedLocators": {},
+  "elementFingerprints": {},
+  "aiModelConfigurations": [],
+  "aiDocuments": [],
+  "aiTestCases": [],
+  "aiAutomationSessions": [],
+  "aiModelUsageLogs": []
+}

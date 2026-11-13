@@ -455,55 +455,103 @@ export const NLP_CATALOG: NlpDefinition[] = [
     id: 'verify_element_is_displayed',
     name: 'Verify Element Is Displayed',
     category: 'Verification',
-    description: 'Verify that the repository element is visible in viewport',
+    description: 'Verify that the repository element is visible in viewport within specified wait duration',
     requiresElement: true,
-    requiredParams: []
+    requiredParams: [
+      {
+        name: 'waitDuration',
+        label: 'Wait Duration (Seconds)',
+        type: 'number',
+        placeholder: 'e.g. 10',
+        defaultValue: 10
+      }
+    ]
   },
   {
     id: 'verify_element_is_not_displayed',
     name: 'Verify Element Is Not Displayed',
     category: 'Verification',
-    description: 'Verify that the repository element is hidden or invisible',
+    description: 'Verify that the repository element is hidden or invisible within specified wait duration',
     requiresElement: true,
-    requiredParams: []
+    requiredParams: [
+      {
+        name: 'waitDuration',
+        label: 'Wait Duration (Seconds)',
+        type: 'number',
+        placeholder: 'e.g. 10',
+        defaultValue: 10
+      }
+    ]
   },
   {
     id: 'verify_element_is_present',
     name: 'Verify Element Is Present',
     category: 'Verification',
-    description: 'Verify that the element exists in DOM tree',
+    description: 'Verify that the element exists in DOM tree within specified wait duration',
     requiresElement: true,
-    requiredParams: []
+    requiredParams: [
+      {
+        name: 'waitDuration',
+        label: 'Wait Duration (Seconds)',
+        type: 'number',
+        placeholder: 'e.g. 10',
+        defaultValue: 10
+      }
+    ]
   },
   {
     id: 'verify_element_is_not_present',
     name: 'Verify Element Is Not Present',
     category: 'Verification',
-    description: 'Verify that the element does not exist anywhere in DOM',
+    description: 'Verify that the element does not exist anywhere in DOM within specified wait duration',
     requiresElement: true,
-    requiredParams: []
+    requiredParams: [
+      {
+        name: 'waitDuration',
+        label: 'Wait Duration (Seconds)',
+        type: 'number',
+        placeholder: 'e.g. 10',
+        defaultValue: 10
+      }
+    ]
   },
   {
     id: 'verify_element_is_enabled',
     name: 'Verify Element Is Enabled',
     category: 'Verification',
-    description: 'Verify that the repository element is enabled for user interaction',
+    description: 'Verify that the repository element is enabled for interaction within specified wait duration',
     requiresElement: true,
-    requiredParams: []
+    requiredParams: [
+      {
+        name: 'waitDuration',
+        label: 'Wait Duration (Seconds)',
+        type: 'number',
+        placeholder: 'e.g. 10',
+        defaultValue: 10
+      }
+    ]
   },
   {
     id: 'verify_element_is_disabled',
     name: 'Verify Element Is Disabled',
     category: 'Verification',
-    description: 'Verify that the repository element is disabled',
+    description: 'Verify that the repository element is disabled within specified wait duration',
     requiresElement: true,
-    requiredParams: []
+    requiredParams: [
+      {
+        name: 'waitDuration',
+        label: 'Wait Duration (Seconds)',
+        type: 'number',
+        placeholder: 'e.g. 10',
+        defaultValue: 10
+      }
+    ]
   },
   {
     id: 'verify_text',
     name: 'Verify Text',
     category: 'Verification',
-    description: 'Verify text content within element or entire page',
+    description: 'Verify text content within element or entire page within specified wait duration',
     requiresElement: false,
     requiredParams: [
       {
@@ -511,6 +559,13 @@ export const NLP_CATALOG: NlpDefinition[] = [
         label: 'Expected Text',
         type: 'string',
         placeholder: 'e.g. Order Placed or $expectedMessage'
+      },
+      {
+        name: 'waitDuration',
+        label: 'Wait Duration (Seconds)',
+        type: 'number',
+        placeholder: 'e.g. 10',
+        defaultValue: 10
       }
     ],
     optionalParams: [
@@ -541,6 +596,13 @@ export const NLP_CATALOG: NlpDefinition[] = [
         label: 'Expected Value',
         type: 'string',
         placeholder: 'e.g. active or $status'
+      },
+      {
+        name: 'waitDuration',
+        label: 'Wait Duration (Seconds)',
+        type: 'number',
+        placeholder: 'e.g. 10',
+        defaultValue: 10
       }
     ]
   },
@@ -556,6 +618,13 @@ export const NLP_CATALOG: NlpDefinition[] = [
         label: 'Expected Page Title',
         type: 'string',
         placeholder: 'e.g. Dashboard - Easy Automate'
+      },
+      {
+        name: 'waitDuration',
+        label: 'Wait Duration (Seconds)',
+        type: 'number',
+        placeholder: 'e.g. 10',
+        defaultValue: 10
       }
     ]
   },
@@ -571,6 +640,13 @@ export const NLP_CATALOG: NlpDefinition[] = [
         label: 'Expected URL',
         type: 'string',
         placeholder: 'e.g. https://demo.easyautomate.dev/orders'
+      },
+      {
+        name: 'waitDuration',
+        label: 'Wait Duration (Seconds)',
+        type: 'number',
+        placeholder: 'e.g. 10',
+        defaultValue: 10
       }
     ]
   },
@@ -586,66 +662,119 @@ export const NLP_CATALOG: NlpDefinition[] = [
         label: 'Expected Selected Value',
         type: 'string',
         placeholder: 'e.g. Active or $selectedValue'
+      },
+      {
+        name: 'waitDuration',
+        label: 'Wait Duration (Seconds)',
+        type: 'number',
+        placeholder: 'e.g. 10',
+        defaultValue: 10
       }
     ]
   },
 
-  // ================= 6. Wait NLPs (6.1 - 6.8) ================= //
-  // NOTE: Strictly adheres to Section 6: ALL Wait NLPs use Global Wait Settings!
-  // NO individual timeout or wait-duration fields inside Wait NLP configurations!
+  // ================= 6. Wait NLPs (6.1 - 6.9) ================= //
+  {
+    id: 'static_wait',
+    name: 'Static Wait',
+    category: 'Wait',
+    description: 'Pause execution for the specified duration (in seconds)',
+    requiresElement: false,
+    requiredParams: [
+      {
+        name: 'waitDuration',
+        label: 'Wait Duration (Seconds)',
+        type: 'number',
+        placeholder: 'e.g. 5',
+        defaultValue: 5
+      }
+    ]
+  },
   {
     id: 'wait_for_element_present',
     name: 'Wait For Element Present',
     category: 'Wait',
-    description: 'Wait until element is attached in DOM using Global Wait Settings',
+    description: 'Wait until element is attached in DOM within specified wait duration',
     requiresElement: true,
-    requiredParams: []
+    requiredParams: [
+      {
+        name: 'waitDuration',
+        label: 'Wait Duration (Seconds)',
+        type: 'number',
+        placeholder: 'e.g. 10',
+        defaultValue: 10
+      }
+    ]
   },
   {
     id: 'wait_for_element_to_be_visible',
     name: 'Wait For Element To Be Visible',
     category: 'Wait',
-    description: 'Wait until element becomes visible in viewport using Global Wait Settings',
+    description: 'Wait until element becomes visible in viewport within specified wait duration',
     requiresElement: true,
-    requiredParams: []
+    requiredParams: [
+      {
+        name: 'waitDuration',
+        label: 'Wait Duration (Seconds)',
+        type: 'number',
+        placeholder: 'e.g. 10',
+        defaultValue: 10
+      }
+    ]
   },
   {
     id: 'wait_for_element_clickable',
-    name: 'Wait For Element Clickable',
+    name: 'Wait For Element To Be Enabled',
     category: 'Wait',
-    description: 'Wait until element is visible and enabled for click using Global Wait Settings',
+    description: 'Wait until element is visible and enabled for interaction within specified wait duration',
     requiresElement: true,
-    requiredParams: []
+    requiredParams: [
+      {
+        name: 'waitDuration',
+        label: 'Wait Duration (Seconds)',
+        type: 'number',
+        placeholder: 'e.g. 10',
+        defaultValue: 10
+      }
+    ]
   },
   {
     id: 'wait_for_page_load',
-    name: 'Wait For Page Load',
+    name: 'Wait For Page Load / Navigation',
     category: 'Wait',
-    description: 'Wait until DOM load and document readyState complete using Global Wait Settings',
+    description: 'Wait until DOM load and document readyState complete within specified wait duration',
     requiresElement: false,
-    requiredParams: []
+    requiredParams: [
+      {
+        name: 'waitDuration',
+        label: 'Wait Duration (Seconds)',
+        type: 'number',
+        placeholder: 'e.g. 15',
+        defaultValue: 15
+      }
+    ]
   },
   {
     id: 'wait_for_network_idle',
     name: 'Wait For Network Idle',
     category: 'Wait',
-    description: 'Wait until network requests settle to idle state using Global Wait Settings',
+    description: 'Wait until network requests settle to idle state within specified wait duration',
     requiresElement: false,
-    requiredParams: []
-  },
-  {
-    id: 'static_wait',
-    name: 'Static Wait',
-    category: 'Wait',
-    description: 'Pause execution momentarily using configured Step Delay in Run Settings',
-    requiresElement: false,
-    requiredParams: []
+    requiredParams: [
+      {
+        name: 'waitDuration',
+        label: 'Wait Duration (Seconds)',
+        type: 'number',
+        placeholder: 'e.g. 10',
+        defaultValue: 10
+      }
+    ]
   },
   {
     id: 'wait_for_text',
     name: 'Wait For Text Present',
     category: 'Wait',
-    description: 'Wait until expected text appears on webpage using Global Wait Settings',
+    description: 'Wait until expected text appears on webpage within specified wait duration',
     requiresElement: false,
     requiredParams: [
       {
@@ -653,16 +782,53 @@ export const NLP_CATALOG: NlpDefinition[] = [
         label: 'Expected Text',
         type: 'string',
         placeholder: 'e.g. Order Placed or $expectedStatus'
+      },
+      {
+        name: 'waitDuration',
+        label: 'Wait Duration (Seconds)',
+        type: 'number',
+        placeholder: 'e.g. 10',
+        defaultValue: 10
+      }
+    ]
+  },
+  {
+    id: 'wait_for_url',
+    name: 'Wait For URL',
+    category: 'Wait',
+    description: 'Wait until the browser URL matches expected URL within specified wait duration',
+    requiresElement: false,
+    requiredParams: [
+      {
+        name: 'expectedUrl',
+        label: 'Expected URL',
+        type: 'string',
+        placeholder: 'e.g. /dashboard or https://demo.playwright.dev/dashboard'
+      },
+      {
+        name: 'waitDuration',
+        label: 'Wait Duration (Seconds)',
+        type: 'number',
+        placeholder: 'e.g. 15',
+        defaultValue: 15
       }
     ]
   },
   {
     id: 'wait_for_element_to_be_hidden',
-    name: 'Wait For Element Not Present',
+    name: 'Wait For Element To Be Hidden',
     category: 'Wait',
-    description: 'Wait until element disappears or is removed from DOM using Global Wait Settings',
+    description: 'Wait until element disappears or is removed from DOM within specified wait duration',
     requiresElement: true,
-    requiredParams: []
+    requiredParams: [
+      {
+        name: 'waitDuration',
+        label: 'Wait Duration (Seconds)',
+        type: 'number',
+        placeholder: 'e.g. 10',
+        defaultValue: 10
+      }
+    ]
   },
 
   // ================= 7. Scroll NLPs (7.1 - 7.6) ================= //

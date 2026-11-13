@@ -86,8 +86,56 @@ const afterPush = afterDelete.filter(e => !pushedIds.has(e.id));
 assert.strictEqual(afterPush.length, 0, 'Captured list should be empty after all elements are pushed');
 console.log('✓ Elements removed from finder upon push and element count reset to 0 verified');
 
-// 6. Test offline DOM test fallback
-manager.testLocator('Test ID', 'nav-home').then(res => {
+// 6. Test duplicate element prevention
+const mockWindowMessages = [];
+manager.setMainWindow({
+  isDestroyed: () => false,
+  webContents: {
+    send: (channel, data) => {
+      mockWindowMessages.push({ channel, data });
+    }
+  }
+});
+
+// Seed session with one element
+manager.syncSessionElements([
+  {
+    id: 'cap_1',
+    sequence: 1,
+    name: 'Login',
+    tag: 'button',
+    visibleText: 'Login',
+    locators: [{ type: 'ID', value: 'loginBtn', isPrimary: true }],
+    rawPayload: { tagName: 'button', textContent: 'Login', id: 'loginBtn', xpath: '//button[@id="loginBtn"]' }
+  }
+]);
+
+// Attempt to capture identical element again
+manager.handleCapturedElement({
+  tagName: 'button',
+  textContent: 'Login',
+  id: 'loginBtn',
+  xpath: '//button[@id="loginBtn"]',
+  name: 'loginBtn',
+  testId: '',
+  className: '',
+  placeholder: '',
+  role: 'button',
+  type: 'submit',
+  ariaLabel: '',
+  alt: '',
+  title: '',
+  cssSelector: 'button#loginBtn'
+}).then(() => {
+  assert.strictEqual(manager.getStatus().capturedCount, 1, 'Captured sequence must not increment for duplicate element');
+  assert.strictEqual(mockWindowMessages.length, 1, 'Should have emitted 1 event');
+  assert.strictEqual(mockWindowMessages[0].data.isDuplicate, true, 'Event must flag isDuplicate = true');
+  assert.strictEqual(mockWindowMessages[0].data.id, 'cap_1', 'Event must reference existing element ID');
+  console.log('✓ Duplicate element capture prevention verified: sequence preserved and duplicate flagged');
+
+  // 7. Test offline DOM test fallback
+  return manager.testLocator('Test ID', 'nav-home');
+}).then(res => {
   assert(res.success, 'testLocator should succeed even when browser is closed (offline analysis)');
   assert.strictEqual(res.matchCount, -1, 'Match count should indicate offline evaluation');
   console.log('✓ testLocator offline fallback verified');

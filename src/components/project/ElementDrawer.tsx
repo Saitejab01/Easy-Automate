@@ -30,6 +30,11 @@ import {
   RepositoryPage
 } from '../../api/types';
 import { api } from '../../api/client';
+import {
+  getNextAvailablePlaceholder,
+  getUsedPlaceholderNumbers,
+  parseDynamicPlaceholders
+} from '../../utils/dynamicPlaceholder';
 
 interface ElementDrawerProps {
   isOpen: boolean;
@@ -42,6 +47,7 @@ interface ElementDrawerProps {
   onSave: (elementData: {
     name: string;
     type: ElementType;
+    elementMode: 'Static' | 'Dynamic';
     description?: string;
     pageId: string;
     locators: Locator[];
@@ -99,6 +105,12 @@ export const ElementDrawer: React.FC<ElementDrawerProps> = ({
     { id: 'loc_1', type: 'XPath', value: '', valueType: 'Static', isPrimary: true, priority: 1 }
   ]);
 
+  // Derived elementMode based completely on locators' valueType (single source of truth)
+  const elementMode: 'Static' | 'Dynamic' =
+    locators.find(l => l.isPrimary)?.valueType === 'Dynamic' || locators.some(l => l.valueType === 'Dynamic')
+      ? 'Dynamic'
+      : 'Static';
+
   // Suggestion popup state for dynamic value insertion
   const [activeSuggestionIdx, setActiveSuggestionIdx] = useState<number | null>(null);
 
@@ -128,6 +140,7 @@ export const ElementDrawer: React.FC<ElementDrawerProps> = ({
       setLocators(
         (elementToEdit.locators || []).map((l, idx) => ({
           ...l,
+          valueType: l.valueType || elementToEdit.elementMode || 'Static',
           priority: l.priority || idx + 1,
           isPrimary: idx === 0
         }))
@@ -324,8 +337,25 @@ export const ElementDrawer: React.FC<ElementDrawerProps> = ({
     }
   };
 
-  // Detect when user types "{" in locator value field
+  // Detect when user types "{" in locator value field or navigates with keyboard
   const handleValueKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, index: number) => {
+    const loc = locators[index];
+    // In Static mode, typing "{" must NOT trigger suggestions
+    if (!loc || loc.valueType !== 'Dynamic') return;
+
+    if (activeSuggestionIdx === index) {
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        insertDynamicPlaceholder(index);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setActiveSuggestionIdx(null);
+        return;
+      }
+    }
+
     if (e.key === '{') {
       setActiveSuggestionIdx(index);
     }
@@ -335,46 +365,60 @@ export const ElementDrawer: React.FC<ElementDrawerProps> = ({
     const val = e.target.value;
     handleLocatorChange(index, 'value', val);
 
-    const selectionStart = e.target.selectionStart || 0;
-    const textBeforeCursor = val.slice(0, selectionStart);
-    if (textBeforeCursor.endsWith('{')) {
-      setActiveSuggestionIdx(index);
-    } else if (!val.includes('{')) {
-      if (activeSuggestionIdx === index) {
+    const loc = locators[index];
+    // In Static mode, autocomplete is completely disabled
+    if (!loc || loc.valueType !== 'Dynamic') {
+      if (activeSuggestionIdx !== null) {
         setActiveSuggestionIdx(null);
       }
+      return;
+    }
+
+    const selectionStart = e.target.selectionStart ?? val.length;
+    const textBeforeCursor = val.slice(0, selectionStart);
+    const lastOpen = textBeforeCursor.lastIndexOf('{');
+    const lastClose = textBeforeCursor.lastIndexOf('}');
+    if (lastOpen !== -1 && lastOpen >= lastClose) {
+      setActiveSuggestionIdx(index);
+    } else {
+      setActiveSuggestionIdx(null);
     }
   };
 
-  // Generate unique placeholder name
-  const getNextPlaceholderName = (currentValue: string): string => {
-    const existing = currentValue.match(/\{dynamic value(\d+)\}/g) || [];
-    let max = 0;
-    existing.forEach(m => {
-      const num = parseInt(m.replace(/\D/g, ''), 10);
-      if (!isNaN(num) && num > max) max = num;
-    });
-    return `dynamic value${max + 1}`;
+  // When clicking or moving cursor in locator input, check if cursor is inside an unclosed "{"
+  const handleInputCursorCheck = (e: React.SyntheticEvent<HTMLInputElement>, index: number) => {
+    const loc = locators[index];
+    if (!loc || loc.valueType !== 'Dynamic') return;
+    const input = e.currentTarget;
+    const selectionStart = input.selectionStart ?? input.value.length;
+    const textBeforeCursor = input.value.slice(0, selectionStart);
+    const lastOpen = textBeforeCursor.lastIndexOf('{');
+    const lastClose = textBeforeCursor.lastIndexOf('}');
+    if (lastOpen !== -1 && lastOpen >= lastClose) {
+      setActiveSuggestionIdx(index);
+    }
   };
 
-  // Insert selected dynamic value
+  // Insert selected dynamic value using gap-filling next available logic across ALL locators of this element (Section 3.2)
   const insertDynamicPlaceholder = (index: number, placeholderName?: string) => {
     const input = inputRefs.current[index];
     const loc = locators[index];
-    if (!input || !loc) return;
+    if (!loc) return;
+
+    // Use centralized gap-filling logic
+    const placeholderStr = placeholderName || getNextAvailablePlaceholder(locators);
 
     const currentVal = loc.value;
-    const cursorPos = input.selectionStart || currentVal.length;
-
-    const nameToInsert = placeholderName || getNextPlaceholderName(currentVal);
-    const placeholderStr = `{${nameToInsert}}`;
+    const cursorPos = input?.selectionStart ?? currentVal.length;
 
     let newVal = '';
     const textBeforeCursor = currentVal.slice(0, cursorPos);
     const textAfterCursor = currentVal.slice(cursorPos);
 
-    if (textBeforeCursor.endsWith('{')) {
-      newVal = textBeforeCursor.slice(0, -1) + placeholderStr + textAfterCursor;
+    const lastOpen = textBeforeCursor.lastIndexOf('{');
+    if (lastOpen !== -1) {
+      const afterSlice = textAfterCursor.startsWith('}') ? textAfterCursor.slice(1) : textAfterCursor;
+      newVal = textBeforeCursor.slice(0, lastOpen) + placeholderStr + afterSlice;
     } else {
       newVal = textBeforeCursor + placeholderStr + textAfterCursor;
     }
@@ -389,14 +433,15 @@ export const ElementDrawer: React.FC<ElementDrawerProps> = ({
     setActiveSuggestionIdx(null);
 
     setTimeout(() => {
-      input.focus();
+      if (inputRefs.current[index]) {
+        inputRefs.current[index]!.focus();
+      }
     }, 50);
   };
 
   // Extract all dynamic placeholders from a string
   const extractPlaceholders = (val: string): string[] => {
-    const matches = val.match(/\{([^}]+)\}/g);
-    return matches ? matches.map(m => m.slice(1, -1)) : [];
+    return parseDynamicPlaceholders(val);
   };
 
   // Validation before saving
@@ -411,10 +456,12 @@ export const ElementDrawer: React.FC<ElementDrawerProps> = ({
       if (!loc.type) return `Locator #${i + 1}: Locator Type is mandatory.`;
       if (!loc.value.trim()) return `Locator #${i + 1}: Locator Value cannot be empty.`;
 
-      const openCount = (loc.value.match(/\{/g) || []).length;
-      const closeCount = (loc.value.match(/\}/g) || []).length;
-      if (openCount !== closeCount) {
-        return `Locator #${i + 1}: Incomplete dynamic placeholder syntax. Braces '{' and '}' must match.`;
+      if (loc.valueType === 'Dynamic') {
+        const openCount = (loc.value.match(/\{/g) || []).length;
+        const closeCount = (loc.value.match(/\}/g) || []).length;
+        if (openCount !== closeCount) {
+          return `Locator #${i + 1}: Incomplete dynamic placeholder syntax. Braces '{' and '}' must match.`;
+        }
       }
     }
 
@@ -429,13 +476,22 @@ export const ElementDrawer: React.FC<ElementDrawerProps> = ({
       return;
     }
 
+    const primaryLoc = locators.find(l => l.isPrimary) || locators[0];
+    const derivedElementMode: 'Static' | 'Dynamic' =
+      primaryLoc?.valueType === 'Dynamic' || locators.some(l => l.valueType === 'Dynamic')
+        ? 'Dynamic'
+        : 'Static';
+
     const payload = {
       name: name.trim(),
       type,
+      elementMode: derivedElementMode,
       description: description.trim(),
       pageId,
+      overwriteElementId: elementToEdit ? elementToEdit.id : undefined,
       locators: locators.map((l, idx) => ({
         ...l,
+        valueType: (l.valueType === 'Dynamic' ? 'Dynamic' : 'Static') as ValueType,
         priority: idx + 1,
         isPrimary: idx === 0
       }))
@@ -744,8 +800,18 @@ export const ElementDrawer: React.FC<ElementDrawerProps> = ({
                         <label className="block text-[11px] text-slate-400 mb-1">Value Type</label>
                         <select
                           value={loc.valueType}
-                          onChange={(e) => handleLocatorChange(idx, 'valueType', e.target.value as ValueType)}
-                          className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-200 text-xs font-medium focus:border-brand-500"
+                          onChange={(e) => {
+                            const newVt = e.target.value as ValueType;
+                            handleLocatorChange(idx, 'valueType', newVt);
+                            if (newVt === 'Static' && activeSuggestionIdx === idx) {
+                              setActiveSuggestionIdx(null);
+                            }
+                          }}
+                          className={`w-full px-2.5 py-1.5 rounded-lg border text-xs font-semibold focus:border-brand-500 transition-colors ${
+                            loc.valueType === 'Dynamic'
+                              ? 'bg-purple-950/40 border-purple-500/50 text-purple-300'
+                              : 'bg-slate-900 border-slate-800 text-slate-200'
+                          }`}
                         >
                           <option value="Static">Static</option>
                           <option value="Dynamic">Dynamic</option>
@@ -760,28 +826,38 @@ export const ElementDrawer: React.FC<ElementDrawerProps> = ({
                           Locator Expression / Value <span className="text-rose-400">*</span>
                         </label>
                         <div className="flex items-center gap-3">
-                          <button
-                            type="button"
-                            onClick={() => insertDynamicPlaceholder(idx)}
-                            className="text-[10px] text-purple-400 hover:text-purple-300 font-semibold flex items-center gap-1 transition-colors"
-                            title="Click to insert a dynamic variable placeholder like {dynamic value1}"
-                          >
-                            <Sparkles className="w-3 h-3" />
-                            <span>+ Insert Dynamic Variable</span>
-                          </button>
+                          {loc.valueType === 'Dynamic' ? (
+                            <button
+                              type="button"
+                              onClick={() => insertDynamicPlaceholder(idx, getNextAvailablePlaceholder(locators))}
+                              className="text-[10px] text-purple-400 hover:text-purple-300 font-semibold flex items-center gap-1 transition-colors"
+                              title="Click to insert next available dynamic placeholder like {dynamic value 1}"
+                            >
+                              <Sparkles className="w-3 h-3" />
+                              <span>+ Insert {getNextAvailablePlaceholder(locators)}</span>
+                            </button>
+                          ) : (
+                            <span className="text-[10px] text-slate-500 font-mono">
+                              Static Locator
+                            </span>
+                          )}
                         </div>
                       </div>
 
                       <div className="flex items-center gap-2">
                         <input
-                          ref={(el) => (inputRefs.current[idx] = el)}
+                          ref={(el) => { inputRefs.current[idx] = el; }}
                           type="text"
                           value={loc.value}
                           onKeyDown={(e) => handleValueKeyDown(e, idx)}
                           onChange={(e) => handleValueChange(e, idx)}
+                          onClick={(e) => handleInputCursorCheck(e, idx)}
+                          onKeyUp={(e) => handleInputCursorCheck(e, idx)}
                           placeholder={
-                            loc.type === 'XPath'
-                              ? "//button[@name='{dynamic value1}']"
+                            loc.valueType === 'Dynamic'
+                              ? "//button[@name='{dynamic value 1}']"
+                              : loc.type === 'XPath'
+                              ? "//button[@id='submit-btn']"
                               : loc.type === 'CSS Selector'
                               ? "button.login-btn"
                               : loc.type === 'ID'
@@ -814,61 +890,76 @@ export const ElementDrawer: React.FC<ElementDrawerProps> = ({
                       </div>
 
                       {/* Dynamic Value Suggestion Popup Dropdown */}
-                      {isSuggestionOpen && (
-                        <div className="absolute left-0 right-0 mt-1 z-30 bg-slate-900 border border-purple-500/40 rounded-xl shadow-2xl p-2 space-y-1 animate-fadeIn">
-                          <div className="px-2 py-1 text-[10px] font-semibold text-purple-400 flex items-center justify-between border-b border-slate-800">
-                            <span className="flex items-center gap-1">
-                              <Sparkles className="w-3 h-3" />
-                              Dynamic Variable Suggestions
-                            </span>
+                      {isSuggestionOpen && loc.valueType === 'Dynamic' && (() => {
+                        const nextPh = getNextAvailablePlaceholder(locators);
+                        const usedNums = getUsedPlaceholderNumbers(locators);
+                        const existingPhs = usedNums.map(n => `{dynamic value ${n}}`).filter(p => p !== nextPh);
+
+                        return (
+                          <div
+                            onMouseDown={(e) => e.preventDefault()}
+                            className="absolute left-0 right-0 mt-1 z-30 bg-slate-900 border border-purple-500/40 rounded-xl shadow-2xl p-2 space-y-1.5 animate-fadeIn"
+                          >
+                            <div className="px-2 py-1 text-[10px] font-semibold text-purple-400 flex items-center justify-between border-b border-slate-800">
+                              <span className="flex items-center gap-1.5">
+                                <Sparkles className="w-3 h-3 text-purple-400" />
+                                Dynamic Variable Suggestions (Gap-Filling)
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => setActiveSuggestionIdx(null)}
+                                className="text-slate-400 hover:text-white"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </div>
+
+                            {/* Next Available Placeholder */}
                             <button
                               type="button"
-                              onClick={() => setActiveSuggestionIdx(null)}
-                              className="text-slate-400 hover:text-white"
+                              onClick={() => insertDynamicPlaceholder(idx, nextPh)}
+                              className="w-full text-left px-2.5 py-2 rounded-lg bg-purple-950/40 hover:bg-purple-900/60 border border-purple-500/30 text-xs text-slate-100 flex items-center justify-between group transition-colors"
                             >
-                              <X className="w-3 h-3" />
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono text-purple-300 font-bold text-xs bg-purple-500/20 px-2 py-0.5 rounded">
+                                  {nextPh}
+                                </span>
+                                <span className="text-[10px] text-emerald-400 font-semibold">
+                                  Next Available (Element Scope)
+                                </span>
+                              </div>
+                              <span className="text-[10px] text-slate-400 group-hover:text-purple-300 font-medium">
+                                Press Enter / Click to insert
+                              </span>
                             </button>
+
+                            {/* Existing Placeholders for this element (to reuse across locators) */}
+                            {existingPhs.length > 0 && (
+                              <div className="pt-1 border-t border-slate-800/80">
+                                <div className="text-[9px] uppercase font-bold text-slate-400 px-2 py-0.5 tracking-wider">
+                                  Existing Placeholders (Reuse in this Element)
+                                </div>
+                                <div className="space-y-1 mt-0.5">
+                                  {existingPhs.map(ph => (
+                                    <button
+                                      key={ph}
+                                      type="button"
+                                      onClick={() => insertDynamicPlaceholder(idx, ph)}
+                                      className="w-full text-left px-2.5 py-1.5 rounded-lg bg-slate-950 hover:bg-purple-950/30 border border-slate-800 hover:border-purple-500/20 text-xs text-slate-200 flex items-center justify-between group transition-colors"
+                                    >
+                                      <span className="font-mono text-purple-300 text-xs">{ph}</span>
+                                      <span className="text-[10px] text-slate-400 group-hover:text-purple-300">Reuse</span>
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
                           </div>
+                        );
+                      })()}
 
-                          <button
-                            type="button"
-                            onClick={() => insertDynamicPlaceholder(idx)}
-                            className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-purple-950/60 text-xs text-slate-200 flex items-center justify-between group transition-colors"
-                          >
-                            <span className="font-mono text-purple-300 font-semibold">
-                              {`{${getNextPlaceholderName(loc.value)}}`}
-                            </span>
-                            <span className="text-[10px] text-slate-400 group-hover:text-purple-300">
-                              Insert Sequential Variable
-                            </span>
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => insertDynamicPlaceholder(idx, 'dynamic text')}
-                            className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-purple-950/60 text-xs text-slate-200 flex items-center justify-between group transition-colors"
-                          >
-                            <span className="font-mono text-purple-300 font-semibold">{'{dynamic text}'}</span>
-                            <span className="text-[10px] text-slate-400 group-hover:text-purple-300">
-                              Insert Text Variable
-                            </span>
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => insertDynamicPlaceholder(idx, 'dynamic id')}
-                            className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-purple-950/60 text-xs text-slate-200 flex items-center justify-between group transition-colors"
-                          >
-                            <span className="font-mono text-purple-300 font-semibold">{'{dynamic id}'}</span>
-                            <span className="text-[10px] text-slate-400 group-hover:text-purple-300">
-                              Insert ID Variable
-                            </span>
-                          </button>
-                        </div>
-                      )}
-
-                      {/* Visual Pills for detected dynamic placeholders */}
-                      {detectedPlaceholders.length > 0 && (
+                      {/* Visual Pills for detected dynamic placeholders (Dynamic Mode Only) */}
+                      {loc.valueType === 'Dynamic' && detectedPlaceholders.length > 0 && (
                         <div className="mt-2 flex flex-wrap items-center gap-1.5">
                           <span className="text-[10px] text-slate-500 font-medium">Detected Placeholders:</span>
                           {detectedPlaceholders.map((ph, pIdx) => (
@@ -877,7 +968,7 @@ export const ElementDrawer: React.FC<ElementDrawerProps> = ({
                               className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-mono font-semibold bg-purple-500/10 text-purple-300 border border-purple-500/30"
                             >
                               <Sparkles className="w-2.5 h-2.5 text-purple-400" />
-                              {`{${ph}}`}
+                              {ph}
                             </span>
                           ))}
                         </div>
